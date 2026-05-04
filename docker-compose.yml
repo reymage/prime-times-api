@@ -1,0 +1,47 @@
+services:
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ptd}
+      POSTGRES_USER: ${POSTGRES_USER:-ptd_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ptd_user} -d ${POSTGRES_DB:-ptd}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend
+
+  # ── FastAPI application ───────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    # Load everything from .env, then override DATABASE_URL to use the
+    # docker-internal service hostname instead of localhost.
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-ptd_user}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-ptd}
+      ENVIRONMENT: production
+    ports:
+      - "0.0.0.0:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  postgres_data:
