@@ -8,6 +8,14 @@ class Settings(BaseSettings):
     # ── Core ──────────────────────────────────────────────────────────────────
     DATABASE_URL: str
     SECRET_KEY: str
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def normalise_db_url(cls, v: str) -> str:
+        # Tortoise ORM requires postgres:// not postgresql://
+        if isinstance(v, str) and v.startswith("postgresql://"):
+            return "postgres" + v[len("postgresql"):]
+        return v
     ENVIRONMENT: str = "development"
 
     # ── Security ──────────────────────────────────────────────────────────────
