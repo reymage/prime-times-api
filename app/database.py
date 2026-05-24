@@ -8,6 +8,11 @@ TORTOISE_ORM = {
         "models": {
             "models": [
                 "app.auth.models",
+                "app.nav.models",
+                "app.articles.models",
+                "app.gating.models",
+                "app.ai.models",
+                "app.console.models",
                 "aerich.models",
             ],
             "default_connection": "default",

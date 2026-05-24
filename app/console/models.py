@@ -1,0 +1,46 @@
+import enum
+import uuid
+
+from tortoise import fields
+from tortoise.models import Model
+
+
+class ConsoleStoryStatus(str, enum.Enum):
+    publish = "publish"
+    draft = "draft"
+    pending_review = "pending_review"
+    future = "future"
+    auto_draft = "auto_draft"
+    trash = "trash"
+    revision = "revision"
+
+
+class ConsoleStory(Model):
+    id = fields.UUIDField(pk=True, default=uuid.uuid4)
+    author = fields.ForeignKeyField("models.User", related_name="console_stories")
+    title = fields.CharField(max_length=500, default="")
+    standfirst = fields.TextField(default="")
+    # JSON array of section objects: [{id, type, heading, content, ...}]
+    sections = fields.JSONField(default=list)
+    cover_image = fields.CharField(max_length=500, null=True)
+    category = fields.CharField(max_length=100, default="")
+    tags = fields.JSONField(default=list)
+    story_type = fields.CharField(max_length=50, default="article")
+    status = fields.CharEnumField(
+        ConsoleStoryStatus,
+        default=ConsoleStoryStatus.auto_draft,
+        max_length=20,
+    )
+    scheduled_for = fields.DatetimeField(null=True)
+    word_count = fields.IntField(default=0)
+    editor_note = fields.TextField(null=True)
+    # When status=revision, points to the story this is a snapshot of
+    revision_of = fields.ForeignKeyField(
+        "models.ConsoleStory", related_name="revisions", null=True
+    )
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "console_stories"
+        ordering = ["-updated_at"]

@@ -9,6 +9,12 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from tortoise.contrib.fastapi import register_tortoise
 
+from app.ai.router import router as ai_router
+from app.articles.router import router as articles_router
+from app.auth.router import router as auth_router
+from app.console.router import router as console_router
+from app.gating.router import router as gating_router
+from app.nav.router import router as nav_router
 from app.config import settings
 from app.database import TORTOISE_ORM
 from app.middleware import SecurityHeadersMiddleware
@@ -77,6 +83,14 @@ register_tortoise(
 )
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
+app.include_router(auth_router)
+app.include_router(nav_router)
+app.include_router(articles_router)
+app.include_router(gating_router)
+app.include_router(console_router)
+app.include_router(ai_router, prefix="/api")
+
+
 @app.get("/api/health")
 @limiter.limit("30/minute")
 async def health_check(request: Request):

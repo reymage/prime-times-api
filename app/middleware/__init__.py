@@ -21,7 +21,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
         # Restrict browser feature access
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=()"
+        )
 
         # Tell browsers to only ever use HTTPS (production only — requires TLS)
         if settings.is_production:
@@ -30,6 +32,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             )
 
         # Strip the server banner so we don't advertise the stack
-        response.headers.pop("server", None)
+        if "server" in response.headers:
+            del response.headers["server"]
 
         return response

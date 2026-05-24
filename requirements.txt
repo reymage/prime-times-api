@@ -1,5 +1,6 @@
 aerich==0.8.1
 gunicorn==23.0.0
+httpx==0.28.1
 slowapi==0.1.9
 aiosqlite==0.22.1
 annotated-doc==0.0.4
@@ -44,3 +45,18 @@ uvicorn==0.46.0
 uvloop==0.22.1
 watchfiles==1.1.1
 websockets==16.0
+# ── AI / LangGraph ────────────────────────────────────────────────────────────
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-groq>=0.2.0
+langchain-openai>=0.2.0
+langchain-anthropic>=0.3.0
+langgraph>=0.2.0
+tavily-python>=0.5.0
+# ── Caching ───────────────────────────────────────────────────────────────────
+redis>=5.2.0
+# ── Cloudflare R2 / S3 ────────────────────────────────────────────────────────
+boto3>=1.35.0
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
