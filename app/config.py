@@ -78,8 +78,12 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             stripped = v.strip()
             if stripped.startswith("["):
-                return json.loads(stripped)
-            return [item.strip() for item in stripped.split(",") if item.strip()]
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    # Strip brackets and fall through to comma-split
+                    stripped = stripped.strip("[]")
+            return [item.strip().strip("\"'") for item in stripped.split(",") if item.strip().strip("\"'")]
         return v  # type: ignore[return-value]
 
     @model_validator(mode="after")
