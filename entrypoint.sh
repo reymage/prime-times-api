@@ -8,7 +8,7 @@ echo "[entrypoint] Starting application..."
 exec gunicorn app.main:app \
   --workers "${GUNICORN_WORKERS:-1}" \
   --worker-class uvicorn.workers.UvicornWorker \
-  --bind "0.0.0.0:8000" \
+  --bind "0.0.0.0:${PORT:-8000}" \
   --timeout 60 \
   --graceful-timeout 30 \
   --keep-alive 5 \
