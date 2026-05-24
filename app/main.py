@@ -49,10 +49,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Innermost: stamp security headers on every response that makes it this far
 app.add_middleware(SecurityHeadersMiddleware)
 
-# CORS — allow configured origins only
+# CORS — allow configured origins + any Cloudflare Workers/Pages deployment
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=r"https://[a-zA-Z0-9-]+\.(workers|pages)\.dev",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
