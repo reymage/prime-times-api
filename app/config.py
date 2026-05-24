@@ -1,7 +1,19 @@
 import json
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _split_comma_list(value: str) -> list[str]:
+    stripped = value.strip()
+    if stripped.startswith("["):
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed]
+        except json.JSONDecodeError:
+            stripped = stripped.strip("[]")
+    return [x.strip().strip("\"'") for x in stripped.split(",") if x.strip().strip("\"'")]
 
 
 class Settings(BaseSettings):
@@ -16,11 +28,23 @@ class Settings(BaseSettings):
         if isinstance(v, str) and v.startswith("postgresql://"):
             return "postgres" + v[len("postgresql"):]
         return v
+
     ENVIRONMENT: str = "development"
 
     # ── Security ──────────────────────────────────────────────────────────────
-    CORS_ORIGINS: list[str] = ["http://localhost:5173"]
-    ALLOWED_HOSTS: list[str] = ["*"]
+    # Stored as str (not list[str]) so pydantic_settings doesn't try to
+    # JSON-parse the env var value before our code can handle it.
+    # The CORS_ORIGINS / ALLOWED_HOSTS properties below parse them on demand.
+    CORS_ORIGINS_RAW: str = Field(default="http://localhost:5173", alias="CORS_ORIGINS")
+    ALLOWED_HOSTS_RAW: str = Field(default="*", alias="ALLOWED_HOSTS")
+
+    @property
+    def CORS_ORIGINS(self) -> list[str]:
+        return _split_comma_list(self.CORS_ORIGINS_RAW)
+
+    @property
+    def ALLOWED_HOSTS(self) -> list[str]:
+        return _split_comma_list(self.ALLOWED_HOSTS_RAW)
 
     # ── Rate limiting ─────────────────────────────────────────────────────────
     RATE_LIMIT_DEFAULT: str = "100/minute"
@@ -62,29 +86,17 @@ class Settings(BaseSettings):
     AI_RATE_LIMIT_WINDOW: int = 60            # seconds
 
     # ── Cloudflare R2 (media storage) ────────────────────────────────────────
-    R2_ACCOUNT_ID: str = ""       # Cloudflare account ID (32-char hex)
-    R2_ACCESS_KEY_ID: str = ""    # R2 API token → Access Key ID
-    R2_SECRET_ACCESS_KEY: str = ""  # R2 API token → Secret Access Key
-    R2_BUCKET_NAME: str = ""      # e.g. ptd-media
-    R2_PUBLIC_URL: str = ""       # e.g. https://pub-XXXX.r2.dev  (no trailing /)
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET_NAME: str = ""
+    R2_PUBLIC_URL: str = ""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
-
-    @field_validator("CORS_ORIGINS", "ALLOWED_HOSTS", mode="before")
-    @classmethod
-    def parse_string_list(cls, v: object) -> list[str]:
-        if isinstance(v, list):
-            return v
-        if isinstance(v, str):
-            stripped = v.strip()
-            if stripped.startswith("["):
-                try:
-                    return json.loads(stripped)
-                except json.JSONDecodeError:
-                    # Strip brackets and fall through to comma-split
-                    stripped = stripped.strip("[]")
-            return [item.strip().strip("\"'") for item in stripped.split(",") if item.strip().strip("\"'")]
-        return v  # type: ignore[return-value]
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        populate_by_name=True,
+    )
 
     @model_validator(mode="after")
     def validate_production_requirements(self) -> "Settings":
