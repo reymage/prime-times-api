@@ -13,7 +13,9 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # Copy application source
 COPY app/ ./app/
-COPY aerich.ini ./
+COPY pyproject.toml ./
+COPY migrations/ ./migrations/
+COPY prompts/ ./prompts/
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 
