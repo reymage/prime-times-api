@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.console.models import ConsoleStoryStatus
+from app.console.models import ConsoleStoryStatus, IssueClusterStatus
 
 # ── HTML sanitizer ────────────────────────────────────────────────────────────
 
@@ -117,6 +117,7 @@ class ConsoleStoryCreate(BaseModel):
     editor_note: Optional[str] = None
     geo_regions: list[str] = Field(default_factory=list)
     is_featured: bool = False
+    issue_cluster_id: Optional[str] = None
 
     @field_validator("title", mode="before")
     @classmethod
@@ -131,7 +132,7 @@ class ConsoleStoryCreate(BaseModel):
     @field_validator("story_type", mode="before")
     @classmethod
     def validate_type(cls, v: object) -> str:
-        valid = {"article", "research_note", "fact_check", "contextual_tile"}
+        valid = {"article", "video", "research_note", "fact_check", "contextual_tile"}
         return str(v) if str(v) in valid else "article"
 
     @field_validator("tags", mode="before")
@@ -201,6 +202,56 @@ class ConsoleStoryRead(BaseModel):
     editor_note: Optional[str]
     geo_regions: list[str]
     is_featured: bool
+    issue_cluster_id: Optional[str]
+    created_at: str
+    updated_at: str
+
+    model_config = {"from_attributes": True}
+
+
+# ── Issue cluster schemas ─────────────────────────────────────────────────────
+
+class IssueClusterCreate(BaseModel):
+    name: str = Field(max_length=200)
+    slug: str = Field(default="", max_length=220)
+    description: str = Field(default="")
+    category: str = Field(default="", max_length=100)
+    status: IssueClusterStatus = Field(default=IssueClusterStatus.active)
+    breaking_order: Optional[int] = None
+    cover_image: Optional[str] = Field(default=None, max_length=500)
+    assigned_editor_id: Optional[str] = None
+
+
+class IssueClusterUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = None
+    category: Optional[str] = Field(default=None, max_length=100)
+    status: Optional[IssueClusterStatus] = None
+    breaking_order: Optional[int] = None
+    cover_image: Optional[str] = Field(default=None, max_length=500)
+    assigned_editor_id: Optional[str] = None
+
+
+class AssignedEditorRead(BaseModel):
+    id: str
+    display_name: Optional[str]
+    email: str
+
+    model_config = {"from_attributes": True}
+
+
+class IssueClusterRead(BaseModel):
+    id: str
+    name: str
+    slug: str
+    description: str
+    category: str
+    status: str
+    breaking_order: Optional[int]
+    cover_image: Optional[str]
+    story_count: int
+    created_by_id: str
+    assigned_editor: Optional[AssignedEditorRead]
     created_at: str
     updated_at: str
 

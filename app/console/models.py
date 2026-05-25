@@ -15,6 +15,33 @@ class ConsoleStoryStatus(str, enum.Enum):
     revision = "revision"
 
 
+class IssueClusterStatus(str, enum.Enum):
+    active = "active"
+    breaking = "breaking"
+    archived = "archived"
+
+
+class IssueCluster(Model):
+    id = fields.UUIDField(pk=True, default=uuid.uuid4)
+    name = fields.CharField(max_length=200)
+    slug = fields.CharField(max_length=220, unique=True)
+    description = fields.TextField(default="")
+    category = fields.CharField(max_length=100, default="")
+    status = fields.CharEnumField(IssueClusterStatus, default=IssueClusterStatus.active, max_length=20)
+    breaking_order = fields.IntField(null=True)
+    cover_image = fields.CharField(max_length=500, null=True)
+    created_by = fields.ForeignKeyField("models.User", related_name="created_issue_clusters")
+    assigned_editor = fields.ForeignKeyField(
+        "models.User", related_name="managed_issue_clusters", null=True
+    )
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "issue_clusters"
+        ordering = ["-updated_at"]
+
+
 class ConsoleStory(Model):
     id = fields.UUIDField(pk=True, default=uuid.uuid4)
     author = fields.ForeignKeyField("models.User", related_name="console_stories")
@@ -41,6 +68,10 @@ class ConsoleStory(Model):
     # When status=revision, points to the story this is a snapshot of
     revision_of = fields.ForeignKeyField(
         "models.ConsoleStory", related_name="revisions", null=True
+    )
+    # Issue cluster this story belongs to (optional)
+    issue_cluster = fields.ForeignKeyField(
+        "models.IssueCluster", related_name="stories", null=True
     )
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)

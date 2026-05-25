@@ -15,13 +15,17 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.auth.dependencies import current_active_user
 from app.auth.models import User
-from app.console.models import ConsoleStory, ConsoleStoryStatus
+from app.console.models import ConsoleStory, ConsoleStoryStatus, IssueCluster
 from app.console.schemas import (
+    AssignedEditorRead,
     AuthorRead,
     ConsoleStoryCreate,
     ConsoleStoryRead,
     ConsoleStoryStatusUpdate,
     ConsoleStoryUpdate,
+    IssueClusterCreate,
+    IssueClusterRead,
+    IssueClusterUpdate,
     SectionData,
 )
 from app.core.roles import UserRole, role_has_at_least
@@ -160,6 +164,7 @@ def _story_to_read(story: ConsoleStory) -> ConsoleStoryRead:
         editor_note=story.editor_note,
         geo_regions=story.geo_regions or [],
         is_featured=story.is_featured or False,
+        issue_cluster_id=str(story.issue_cluster_id) if story.issue_cluster_id else None,
         created_at=story.created_at.isoformat(),
         updated_at=story.updated_at.isoformat(),
     )
@@ -247,6 +252,7 @@ async def create_story(
         editor_note=body.editor_note,
         geo_regions=body.geo_regions,
         is_featured=body.is_featured,
+        issue_cluster_id=body.issue_cluster_id or None,
     )
     await story.fetch_related("author")
     return _story_to_read(story)
@@ -282,6 +288,7 @@ async def update_story(
         "status": body.status,
         "word_count": body.word_count,
         "geo_regions": body.geo_regions,
+        "issue_cluster_id": body.issue_cluster_id or None,
     }
     if body.editor_note is not None and is_editorial:
         update_data["editor_note"] = body.editor_note
@@ -379,3 +386,155 @@ async def delete_story(
     else:
         story.status = ConsoleStoryStatus.trash
         await story.save()
+
+
+# ── Issue cluster helpers ──────────────────────────────────────────────────────
+
+def _require_editorial(current_user: User = Depends(current_active_user)) -> User:
+    if current_user.role not in _EDITORIAL_ROLES:
+        raise HTTPException(status_code=403, detail="Requires editor role or above")
+    return current_user
+
+
+def _slugify_issue(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:200]
+
+
+async def _issue_to_read(cluster: IssueCluster) -> IssueClusterRead:
+    story_count = await ConsoleStory.filter(
+        issue_cluster_id=cluster.id
+    ).exclude(status=ConsoleStoryStatus.trash).count()
+
+    assigned_editor = None
+    if cluster.assigned_editor_id:
+        try:
+            editor = await User.get(id=cluster.assigned_editor_id)
+            assigned_editor = AssignedEditorRead(
+                id=str(editor.id),
+                display_name=editor.display_name,
+                email=editor.email,
+            )
+        except Exception:
+            pass
+
+    return IssueClusterRead(
+        id=str(cluster.id),
+        name=cluster.name,
+        slug=cluster.slug,
+        description=cluster.description,
+        category=cluster.category,
+        status=cluster.status.value,
+        breaking_order=cluster.breaking_order,
+        cover_image=cluster.cover_image,
+        story_count=story_count,
+        created_by_id=str(cluster.created_by_id),
+        assigned_editor=assigned_editor,
+        created_at=cluster.created_at.isoformat(),
+        updated_at=cluster.updated_at.isoformat(),
+    )
+
+
+# ── Issue cluster endpoints ────────────────────────────────────────────────────
+
+@router.get("/issues", response_model=list[IssueClusterRead])
+async def list_issues(
+    status: Optional[str] = Query(None),
+    current_user: User = Depends(_require_writer),
+) -> list[IssueClusterRead]:
+    qs = IssueCluster.all()
+    if status:
+        qs = qs.filter(status=status)
+    clusters = await qs.order_by("-updated_at")
+    return [await _issue_to_read(c) for c in clusters]
+
+
+@router.post("/issues", response_model=IssueClusterRead, status_code=201)
+async def create_issue(
+    body: IssueClusterCreate,
+    current_user: User = Depends(_require_editorial),
+) -> IssueClusterRead:
+    slug = body.slug.strip() if body.slug.strip() else _slugify_issue(body.name)
+    # Ensure slug uniqueness
+    base = slug
+    counter = 1
+    while await IssueCluster.filter(slug=slug).exists():
+        slug = f"{base}-{counter}"
+        counter += 1
+
+    cluster = await IssueCluster.create(
+        name=body.name,
+        slug=slug,
+        description=body.description,
+        category=body.category,
+        status=body.status,
+        breaking_order=body.breaking_order,
+        cover_image=body.cover_image,
+        created_by_id=current_user.id,
+        assigned_editor_id=body.assigned_editor_id or None,
+    )
+    return await _issue_to_read(cluster)
+
+
+@router.get("/issues/{issue_id}", response_model=IssueClusterRead)
+async def get_issue(
+    issue_id: uuid.UUID,
+    current_user: User = Depends(_require_writer),
+) -> IssueClusterRead:
+    cluster = await IssueCluster.filter(id=issue_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Issue cluster not found")
+    return await _issue_to_read(cluster)
+
+
+@router.patch("/issues/{issue_id}", response_model=IssueClusterRead)
+async def update_issue(
+    issue_id: uuid.UUID,
+    body: IssueClusterUpdate,
+    current_user: User = Depends(_require_editorial),
+) -> IssueClusterRead:
+    cluster = await IssueCluster.filter(id=issue_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Issue cluster not found")
+
+    if body.name is not None:
+        cluster.name = body.name
+    if body.description is not None:
+        cluster.description = body.description
+    if body.category is not None:
+        cluster.category = body.category
+    if body.status is not None:
+        cluster.status = body.status
+    if body.breaking_order is not None:
+        cluster.breaking_order = body.breaking_order
+    if body.cover_image is not None:
+        cluster.cover_image = body.cover_image
+    if body.assigned_editor_id is not None:
+        cluster.assigned_editor_id = body.assigned_editor_id or None  # type: ignore[assignment]
+
+    await cluster.save()
+    return await _issue_to_read(cluster)
+
+
+@router.delete("/issues/{issue_id}", status_code=204)
+async def delete_issue(
+    issue_id: uuid.UUID,
+    current_user: User = Depends(_require_editorial),
+) -> None:
+    cluster = await IssueCluster.filter(id=issue_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Issue cluster not found")
+    await cluster.delete()
+
+
+@router.get("/issues/{issue_id}/stories", response_model=list[ConsoleStoryRead])
+async def list_issue_stories(
+    issue_id: uuid.UUID,
+    current_user: User = Depends(_require_writer),
+) -> list[ConsoleStoryRead]:
+    cluster = await IssueCluster.filter(id=issue_id).first()
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Issue cluster not found")
+    stories = await ConsoleStory.filter(
+        issue_cluster_id=issue_id
+    ).exclude(status=ConsoleStoryStatus.trash).prefetch_related("author").order_by("-updated_at")
+    return [_story_to_read(s) for s in stories]
