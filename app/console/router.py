@@ -158,6 +158,8 @@ def _story_to_read(story: ConsoleStory) -> ConsoleStoryRead:
         scheduled_for=story.scheduled_for.isoformat() if story.scheduled_for else None,
         word_count=story.word_count,
         editor_note=story.editor_note,
+        geo_regions=story.geo_regions or [],
+        is_featured=story.is_featured or False,
         created_at=story.created_at.isoformat(),
         updated_at=story.updated_at.isoformat(),
     )
@@ -243,6 +245,8 @@ async def create_story(
         status=body.status,
         word_count=body.word_count,
         editor_note=body.editor_note,
+        geo_regions=body.geo_regions,
+        is_featured=body.is_featured,
     )
     await story.fetch_related("author")
     return _story_to_read(story)
@@ -277,9 +281,13 @@ async def update_story(
         "story_type": body.story_type,
         "status": body.status,
         "word_count": body.word_count,
+        "geo_regions": body.geo_regions,
     }
     if body.editor_note is not None and is_editorial:
         update_data["editor_note"] = body.editor_note
+    # Only editors can set the featured flag
+    if is_editorial:
+        update_data["is_featured"] = body.is_featured
 
     await story.update_from_dict(update_data).save()
     await story.fetch_related("author")

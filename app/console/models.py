@@ -34,6 +34,10 @@ class ConsoleStory(Model):
     scheduled_for = fields.DatetimeField(null=True)
     word_count = fields.IntField(default=0)
     editor_note = fields.TextField(null=True)
+    # Geographic focus — writer indicates which regions the story targets
+    geo_regions = fields.JSONField(default=list)
+    # Featured flag — editors promote a story to the featured placement slot
+    is_featured = fields.BooleanField(default=False)
     # When status=revision, points to the story this is a snapshot of
     revision_of = fields.ForeignKeyField(
         "models.ConsoleStory", related_name="revisions", null=True

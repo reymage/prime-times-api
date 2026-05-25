@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException
 class UserRole(str, enum.Enum):
     reader = "reader"
     contributor = "contributor"
+    columnist = "columnist"
     reporter = "reporter"
     editor = "editor"
     admin = "admin"
@@ -15,6 +16,7 @@ class UserRole(str, enum.Enum):
 _ROLE_ORDER: list[UserRole] = [
     UserRole.reader,
     UserRole.contributor,
+    UserRole.columnist,
     UserRole.reporter,
     UserRole.editor,
     UserRole.admin,

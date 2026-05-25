@@ -257,10 +257,6 @@ SEED_NAV = [
     {"label": "World",         "slug": "world",         "href": "/category/world",       "area": NavArea.main, "item_type": NavItemType.category, "position": 4},
     {"label": "Sport",         "slug": "sport",         "href": "/category/sport",       "area": NavArea.main, "item_type": NavItemType.category, "position": 5},
     {"label": "Entertainment", "slug": "entertainment", "href": "/category/entertainment","area": NavArea.main, "item_type": NavItemType.category, "position": 6},
-    # Console nav
-    {"label": "Dashboard",     "slug": "console-dashboard", "href": "/console",           "area": NavArea.console, "item_type": NavItemType.primary, "position": 0},
-    {"label": "Articles",      "slug": "console-articles",  "href": "/console/articles",  "area": NavArea.console, "item_type": NavItemType.primary, "position": 1},
-    {"label": "Editors",       "slug": "console-editors",   "href": "/console/editors",   "area": NavArea.console, "item_type": NavItemType.primary, "position": 2},
 ]
 
 

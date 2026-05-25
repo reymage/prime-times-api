@@ -115,6 +115,8 @@ class ConsoleStoryCreate(BaseModel):
     scheduled_for: Optional[str] = None
     word_count: int = Field(default=0, ge=0)
     editor_note: Optional[str] = None
+    geo_regions: list[str] = Field(default_factory=list)
+    is_featured: bool = False
 
     @field_validator("title", mode="before")
     @classmethod
@@ -156,6 +158,13 @@ class ConsoleStoryCreate(BaseModel):
             return v[:200]
         return []
 
+    @field_validator("geo_regions", mode="before")
+    @classmethod
+    def sanitize_geo_regions(cls, v: object) -> list[str]:
+        if isinstance(v, list):
+            return [html.escape(str(r)[:100]) for r in v[:20]]
+        return []
+
 
 class ConsoleStoryUpdate(ConsoleStoryCreate):
     pass
@@ -190,6 +199,8 @@ class ConsoleStoryRead(BaseModel):
     scheduled_for: Optional[str]
     word_count: int
     editor_note: Optional[str]
+    geo_regions: list[str]
+    is_featured: bool
     created_at: str
     updated_at: str
 
