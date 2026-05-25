@@ -133,7 +133,7 @@ def _story_to_read(story: ConsoleStory) -> ConsoleStoryRead:
         id=str(story.author_id),
         display_name=story.author.display_name if hasattr(story, "author") and story.author else None,
         email=story.author.email if hasattr(story, "author") and story.author else "",
-        role=str(story.author.role) if hasattr(story, "author") and story.author else "",
+        role=story.author.role.value if hasattr(story, "author") and story.author and story.author.role else "",
     )
     return ConsoleStoryRead(
         id=str(story.id),
