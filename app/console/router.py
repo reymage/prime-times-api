@@ -5,7 +5,9 @@ Role visibility:
   reporter / contributor  → own stories only
   editor / admin / super_admin → all stories
 """
+import re
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -22,6 +24,93 @@ from app.console.schemas import (
     SectionData,
 )
 from app.core.roles import UserRole, role_has_at_least
+
+
+# ── Publish pipeline helpers ──────────────────────────────────────────────────
+
+def _slugify(text: str, suffix: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:80]
+    return f"{slug}-{suffix}" if slug else f"story-{suffix}"
+
+
+def _sections_to_html(sections: list) -> str:
+    parts = []
+    for s in sections:
+        stype = s.get("type", "text")
+        if stype == "text":
+            if s.get("heading"):
+                parts.append(f'<h2>{s["heading"]}</h2>')
+            if s.get("content"):
+                parts.append(s["content"])
+        elif stype == "image" and s.get("src"):
+            alt = s.get("alt", "")
+            cap = s.get("caption", "")
+            parts.append(
+                f'<figure><img src="{s["src"]}" alt="{alt}" style="max-width:100%"/>'
+                + (f"<figcaption>{cap}</figcaption>" if cap else "")
+                + "</figure>"
+            )
+        elif stype == "video" and s.get("video_id"):
+            vid = s["video_id"]
+            if s.get("provider", "youtube") == "youtube":
+                parts.append(
+                    f'<figure style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden">'
+                    f'<iframe src="https://www.youtube-nocookie.com/embed/{vid}" '
+                    f'style="position:absolute;top:0;left:0;width:100%;height:100%;border:0" allowfullscreen></iframe>'
+                    f"</figure>"
+                )
+    return "".join(parts)
+
+
+async def _sync_article(story: ConsoleStory) -> None:
+    """Create or update the public Article record for a published ConsoleStory."""
+    from app.articles.models import Article
+
+    marker = f"ptd:console:{story.id}"
+    try:
+        author_name = story.author.display_name or story.author.email  # type: ignore[union-attr]
+    except Exception:
+        author_name = ""
+
+    content_html = _sections_to_html(story.sections or [])
+    excerpt = story.standfirst or ""
+    img = story.cover_image or ""
+    category = story.category or "General"
+
+    existing = await Article.filter(source_url=marker).first()
+    if existing:
+        await existing.update_from_dict({
+            "title": story.title or "",
+            "excerpt": excerpt,
+            "content": content_html,
+            "category": category,
+            "image_url": img,
+            "author": author_name,
+            "tags": story.tags or [],
+        }).save()
+    else:
+        suffix = str(story.id).replace("-", "")[:8]
+        slug = _slugify(story.title or "untitled", suffix)
+        counter = 1
+        base = slug
+        while await Article.filter(slug=slug).exists():
+            slug = f"{base}-{counter}"
+            counter += 1
+        await Article.create(
+            slug=slug,
+            title=story.title or "",
+            excerpt=excerpt,
+            content=content_html,
+            category=category,
+            image_url=img,
+            author=author_name,
+            source="Prime Times Daily",
+            source_url=marker,
+            is_internal=True,
+            is_featured=False,
+            published_at=datetime.now(timezone.utc),
+            tags=story.tags or [],
+        )
 
 router = APIRouter(prefix="/api/console", tags=["console"])
 
@@ -185,6 +274,9 @@ async def update_story(
 
     await story.update_from_dict(update_data).save()
     await story.fetch_related("author")
+    # Keep the public Article in sync if this story is already published
+    if update_data.get("status") == ConsoleStoryStatus.publish or story.status == ConsoleStoryStatus.publish:
+        await _sync_article(story)
     return _story_to_read(story)
 
 
@@ -213,6 +305,8 @@ async def update_story_status(
 
     await story.update_from_dict(update).save()
     await story.fetch_related("author")
+    if body.status == ConsoleStoryStatus.publish:
+        await _sync_article(story)
     return _story_to_read(story)
 
 
