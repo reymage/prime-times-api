@@ -100,6 +100,27 @@ async def cache_set(key: str, value: Any, ttl: int | None = None) -> None:
     await _lru.set(key, value, ttl)
 
 
+async def cache_invalidate_prefix(prefix: str) -> int:
+    """Delete all cache entries whose key starts with `prefix`. Returns count deleted."""
+    count = 0
+    r = await _get_redis()
+    if r:
+        try:
+            keys = await r.keys(f"{prefix}*")
+            if keys:
+                count = await r.delete(*keys)
+            return count
+        except Exception as exc:
+            logger.debug("Redis delete failed: %s", exc)
+    # In-memory LRU fallback
+    async with _lru._lock:
+        to_delete = [k for k in list(_lru._store) if k.startswith(prefix)]
+        for k in to_delete:
+            del _lru._store[k]
+        count = len(to_delete)
+    return count
+
+
 # ── Key builders ───────────────────────────────────────────────────────────────
 
 def _llm_cache_key(model_name: str, messages: list[dict], temperature: float) -> str:

@@ -5,6 +5,7 @@ Role visibility:
   reporter / contributor  → own stories only
   editor / admin / super_admin → all stories
 """
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -24,6 +25,8 @@ from app.console.schemas import (
     SectionData,
 )
 from app.core.roles import UserRole, role_has_at_least
+
+logger = logging.getLogger(__name__)
 
 
 # ── Publish pipeline helpers ──────────────────────────────────────────────────
@@ -65,6 +68,7 @@ def _sections_to_html(sections: list) -> str:
 async def _sync_article(story: ConsoleStory) -> None:
     """Create or update the public Article record for a published ConsoleStory."""
     from app.articles.models import Article
+    from app.ai.cache import cache_invalidate_prefix
 
     marker = f"ptd:console:{story.id}"
     try:
@@ -88,6 +92,7 @@ async def _sync_article(story: ConsoleStory) -> None:
             "author": author_name,
             "tags": story.tags or [],
         }).save()
+        logger.info("Synced article update for story %s", story.id)
     else:
         suffix = str(story.id).replace("-", "")[:8]
         slug = _slugify(story.title or "untitled", suffix)
@@ -111,6 +116,10 @@ async def _sync_article(story: ConsoleStory) -> None:
             published_at=datetime.now(timezone.utc),
             tags=story.tags or [],
         )
+        logger.info("Created public article for story %s (slug=%s)", story.id, slug)
+
+    # Bust the feed cache so the new/updated article appears immediately
+    await cache_invalidate_prefix("feed:")
 
 router = APIRouter(prefix="/api/console", tags=["console"])
 
@@ -276,7 +285,10 @@ async def update_story(
     await story.fetch_related("author")
     # Keep the public Article in sync if this story is already published
     if update_data.get("status") == ConsoleStoryStatus.publish or story.status == ConsoleStoryStatus.publish:
-        await _sync_article(story)
+        try:
+            await _sync_article(story)
+        except Exception as exc:
+            logger.error("Failed to sync article for story %s: %s", story_id, exc)
     return _story_to_read(story)
 
 
@@ -306,7 +318,10 @@ async def update_story_status(
     await story.update_from_dict(update).save()
     await story.fetch_related("author")
     if body.status == ConsoleStoryStatus.publish:
-        await _sync_article(story)
+        try:
+            await _sync_article(story)
+        except Exception as exc:
+            logger.error("Failed to sync article for story %s: %s", story_id, exc)
     return _story_to_read(story)
 
 
