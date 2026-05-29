@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     AI_RATE_LIMIT: int = 10                   # requests per window
     AI_RATE_LIMIT_WINDOW: int = 60            # seconds
 
+    # ── Paystack ──────────────────────────────────────────────────────────────
+    # Swap PAYSTACK_SECRET_KEY to switch between Reymage account and company account.
+    # sk_test_... = test mode, sk_live_... = live mode — no code change needed.
+    PAYSTACK_SECRET_KEY: str = ""
+    PAYSTACK_WEBHOOK_SECRET: str = ""      # from Paystack dashboard → Settings → Webhooks
+    PAYSTACK_ENABLED: bool = False         # set True once keys are configured
+
+    @property
+    def paystack_live(self) -> bool:
+        return self.PAYSTACK_ENABLED and bool(self.PAYSTACK_SECRET_KEY)
+
     # ── Cloudflare R2 (media storage) ────────────────────────────────────────
     R2_ACCOUNT_ID: str = ""
     R2_ACCESS_KEY_ID: str = ""

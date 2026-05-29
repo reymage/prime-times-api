@@ -218,6 +218,7 @@ class IssueClusterCreate(BaseModel):
     category: str = Field(default="", max_length=100)
     status: IssueClusterStatus = Field(default=IssueClusterStatus.active)
     breaking_order: Optional[int] = None
+    breaking_expires_at: Optional[str] = None
     cover_image: Optional[str] = Field(default=None, max_length=500)
     assigned_editor_id: Optional[str] = None
 
@@ -228,6 +229,7 @@ class IssueClusterUpdate(BaseModel):
     category: Optional[str] = Field(default=None, max_length=100)
     status: Optional[IssueClusterStatus] = None
     breaking_order: Optional[int] = None
+    breaking_expires_at: Optional[str] = None
     cover_image: Optional[str] = Field(default=None, max_length=500)
     assigned_editor_id: Optional[str] = None
 
@@ -248,6 +250,7 @@ class IssueClusterRead(BaseModel):
     category: str
     status: str
     breaking_order: Optional[int]
+    breaking_expires_at: Optional[str]
     cover_image: Optional[str]
     story_count: int
     created_by_id: str

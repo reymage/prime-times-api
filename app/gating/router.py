@@ -14,6 +14,7 @@ from app.gating.schemas import (
     PurchasePassRequest,
     PurchasePassResponse,
 )
+from app.contributors.models import PaywallReadEvent
 
 router = APIRouter(prefix="/api/gating", tags=["gating"])
 
@@ -164,3 +165,45 @@ async def purchase_pass(
         day_pass_price_kobo=policy.day_pass_price_kobo,
         week_pass_price_kobo=policy.week_pass_price_kobo,
     )
+
+
+@router.post("/articles/{slug}/record-paywall-read", status_code=204)
+async def record_paywall_read(
+    slug: str,
+    current_user: User = Depends(current_active_user),
+) -> None:
+    """
+    Called by the frontend after a pay-worthy story is successfully rendered
+    for a reader who has a valid pass (or is within the free-read threshold).
+    Creates a PaywallReadEvent row used for contributor reward distribution.
+    Idempotent: calling twice for the same user+story is a no-op.
+    """
+    article = await Article.filter(slug=slug).first()
+    if not article or not article.is_premium or not article.console_story_id:
+        return
+
+    policy = await _get_policy()
+    now = datetime.now(tz=timezone.utc)
+
+    # Verify the user actually has access before recording the read.
+    has_pass = await PurchasedPass.filter(
+        user_id=current_user.id, expires_at__gt=now
+    ).exists()
+
+    if not has_pass:
+        free_reads = await PremiumRead.filter(user_id=current_user.id).count()
+        if free_reads >= policy.free_article_threshold:
+            raise HTTPException(403, "No valid pass for this content")
+
+    # Idempotent create — unique_together (console_story, reader) prevents duplicates.
+    created = await PaywallReadEvent.get_or_create(
+        console_story_id=article.console_story_id,
+        reader_id=current_user.id,
+    )
+    if created[1]:
+        # Only increment the cache counter on first creation.
+        from tortoise.expressions import F
+        from app.console.models import ConsoleStory
+        await ConsoleStory.filter(id=article.console_story_id).update(
+            paywall_read_count=F("paywall_read_count") + 1
+        )

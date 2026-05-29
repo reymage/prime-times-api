@@ -34,6 +34,7 @@ class IssueCluster(Model):
     assigned_editor = fields.ForeignKeyField(
         "models.User", related_name="managed_issue_clusters", null=True
     )
+    breaking_expires_at = fields.DatetimeField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
@@ -73,6 +74,19 @@ class ConsoleStory(Model):
     issue_cluster = fields.ForeignKeyField(
         "models.IssueCluster", related_name="stories", null=True
     )
+    # ── Reward / pay-worthy fields ────────────────────────────────────────────
+    # Set to True by editor when story passes: original reporting + local impact
+    # + public interest. Only pay-worthy stories go behind paywall and qualify
+    # for contributor rewards.
+    is_pay_worthy = fields.BooleanField(default=False)
+    # {original_reporting: bool, local_impact: bool, public_interest: bool}
+    pay_worthy_rubric = fields.JSONField(null=True)
+    # Incremented each time a reader unlocks this story via the paywall.
+    paywall_read_count = fields.IntField(default=0)
+    # 0-100 editorial quality score; used in the eligibility algorithm gate.
+    editorial_score = fields.IntField(null=True)
+    # Set when status transitions to 'publish'; used for tenure calculations.
+    published_at = fields.DatetimeField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 

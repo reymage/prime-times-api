@@ -13,7 +13,9 @@ from app.ai.router import router as ai_router
 from app.articles.router import router as articles_router
 from app.auth.router import router as auth_router
 from app.console.router import router as console_router
+from app.contributors.router import router as contributors_router
 from app.gating.router import router as gating_router
+from app.issues.router import router as issues_router
 from app.nav.router import router as nav_router
 from app.config import settings
 from app.database import TORTOISE_ORM
@@ -88,7 +90,9 @@ app.include_router(auth_router)
 app.include_router(nav_router)
 app.include_router(articles_router)
 app.include_router(gating_router)
+app.include_router(issues_router)
 app.include_router(console_router)
+app.include_router(contributors_router)
 app.include_router(ai_router, prefix="/api")
 
 

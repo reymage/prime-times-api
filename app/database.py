@@ -33,6 +33,7 @@ TORTOISE_ORM = {
                 "app.gating.models",
                 "app.ai.models",
                 "app.console.models",
+                "app.contributors.models",
                 "aerich.models",
             ],
             "default_connection": "default",

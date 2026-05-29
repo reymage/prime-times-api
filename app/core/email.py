@@ -85,6 +85,89 @@ class EmailClient:
             html_body=_tpl_reset(to_name, reset_url),
         )
 
+    # ── Contributor reward emails ──────────────────────────────────────────
+
+    async def send_application_approved(
+        self, to_email: str, to_name: str, console_url: str
+    ) -> None:
+        await self.send(
+            to_email,
+            to_name,
+            subject="Your Prime Times Daily contributor application is approved",
+            html_body=_tpl_application_approved(to_name, console_url),
+        )
+
+    async def send_application_rejected(
+        self, to_email: str, to_name: str, note: str | None
+    ) -> None:
+        await self.send(
+            to_email,
+            to_name,
+            subject="Update on your Prime Times Daily contributor application",
+            html_body=_tpl_application_rejected(to_name, note),
+        )
+
+    async def send_earnings_distributed(
+        self,
+        to_email: str,
+        to_name: str,
+        week_start: str,
+        week_end: str,
+        amount: str,
+        earnings_url: str,
+    ) -> None:
+        await self.send(
+            to_email,
+            to_name,
+            subject=f"Your earnings for {week_start} – {week_end} are pending review",
+            html_body=_tpl_earnings_distributed(to_name, week_start, week_end, amount, earnings_url),
+        )
+
+    async def send_earning_approved(
+        self, to_email: str, to_name: str, amount: str, payout_url: str
+    ) -> None:
+        await self.send(
+            to_email,
+            to_name,
+            subject=f"₦{amount} earning approved — you can request a payout",
+            html_body=_tpl_earning_approved(to_name, amount, payout_url),
+        )
+
+    async def send_payout_approved(
+        self, to_email: str, to_name: str, amount: str
+    ) -> None:
+        await self.send(
+            to_email,
+            to_name,
+            subject=f"Your payout of ₦{amount} has been approved",
+            html_body=_tpl_payout_approved(to_name, amount),
+        )
+
+    async def send_payout_paid(
+        self,
+        to_email: str,
+        to_name: str,
+        amount: str,
+        bank_name: str,
+        account_number_masked: str,
+    ) -> None:
+        await self.send(
+            to_email,
+            to_name,
+            subject=f"₦{amount} has been sent to your account",
+            html_body=_tpl_payout_paid(to_name, amount, bank_name, account_number_masked),
+        )
+
+    async def send_payout_failed(
+        self, to_email: str, to_name: str, amount: str, reason: str | None
+    ) -> None:
+        await self.send(
+            to_email,
+            to_name,
+            subject="Your payout transfer could not be completed",
+            html_body=_tpl_payout_failed(to_name, amount, reason),
+        )
+
 
 # ── Email templates ────────────────────────────────────────────────────────
 # Plain inline HTML — replace with a proper template engine (Jinja2, MJML, etc.)
@@ -116,6 +199,77 @@ def _tpl_reset(name: str, url: str) -> str:
 <p>A password reset was requested for your <strong>Prime Times Daily</strong> account.</p>
 <p><a href="{url}">Reset my password</a></p>
 <p>This link expires in 1 hour. If you did not request this, ignore this email.</p>
+"""
+
+
+# ── Contributor reward templates ───────────────────────────────────────────────
+
+def _tpl_application_approved(name: str, console_url: str) -> str:
+    return f"""
+<p>Hi {name},</p>
+<p>Great news — your application to join the <strong>Prime Times Daily</strong> contributor programme has been approved.</p>
+<p>You now have access to the contributor console where you can submit stories, track your earnings, and manage your payout details.</p>
+<p><a href="{console_url}">Go to your console</a></p>
+<p>Welcome to the team.</p>
+"""
+
+
+def _tpl_application_rejected(name: str, note: str | None) -> str:
+    note_block = f"<p><em>Reviewer note: {note}</em></p>" if note else ""
+    return f"""
+<p>Hi {name},</p>
+<p>Thank you for your interest in the <strong>Prime Times Daily</strong> contributor programme.</p>
+<p>After reviewing your application, we are unable to approve it at this time.</p>
+{note_block}
+<p>You are welcome to apply again in the future. If you have questions, please reach out to our editorial team.</p>
+"""
+
+
+def _tpl_earnings_distributed(
+    name: str, week_start: str, week_end: str, amount: str, earnings_url: str
+) -> str:
+    return f"""
+<p>Hi {name},</p>
+<p>Your earnings for the week of <strong>{week_start} – {week_end}</strong> have been calculated and are now pending editorial review.</p>
+<p><strong>Pending amount: ₦{amount}</strong></p>
+<p>Once reviewed and approved by the editorial team, you will be able to request a payout from your console.</p>
+<p><a href="{earnings_url}">View your earnings</a></p>
+"""
+
+
+def _tpl_earning_approved(name: str, amount: str, payout_url: str) -> str:
+    return f"""
+<p>Hi {name},</p>
+<p>Your earning of <strong>₦{amount}</strong> has been approved by the editorial team.</p>
+<p>If your total approved balance meets the minimum payout threshold (₦5,000), you can now request a payout.</p>
+<p><a href="{payout_url}">Request a payout</a></p>
+"""
+
+
+def _tpl_payout_approved(name: str, amount: str) -> str:
+    return f"""
+<p>Hi {name},</p>
+<p>Your payout request of <strong>₦{amount}</strong> has been approved and is being processed.</p>
+<p>The transfer will be initiated shortly. You will receive a confirmation once the funds have been sent to your bank account.</p>
+"""
+
+
+def _tpl_payout_paid(name: str, amount: str, bank_name: str, account_masked: str) -> str:
+    return f"""
+<p>Hi {name},</p>
+<p><strong>₦{amount}</strong> has been sent to your bank account.</p>
+<p>Bank: {bank_name}<br>Account: {account_masked}</p>
+<p>Transfers typically arrive within minutes. If you do not receive the funds within 24 hours, please contact our support team.</p>
+"""
+
+
+def _tpl_payout_failed(name: str, amount: str, reason: str | None) -> str:
+    reason_block = f"<p><em>Reason: {reason}</em></p>" if reason else ""
+    return f"""
+<p>Hi {name},</p>
+<p>Unfortunately, your payout transfer of <strong>₦{amount}</strong> could not be completed.</p>
+{reason_block}
+<p>Please verify your bank account details in the console and contact our support team so we can retry the transfer.</p>
 """
 
 

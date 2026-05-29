@@ -15,7 +15,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.auth.dependencies import current_active_user
 from app.auth.models import User
-from app.console.models import ConsoleStory, ConsoleStoryStatus, IssueCluster
+from app.console.models import ConsoleStory, ConsoleStoryStatus, IssueCluster, IssueClusterStatus
+from app.nav.models import NavArea, NavItemType, NavMenu
 from app.console.schemas import (
     AssignedEditorRead,
     AuthorRead,
@@ -85,6 +86,8 @@ async def _sync_article(story: ConsoleStory) -> None:
     img = story.cover_image or ""
     category = story.category or "General"
 
+    issue_cluster_id = story.issue_cluster_id or None
+
     existing = await Article.filter(source_url=marker).first()
     if existing:
         await existing.update_from_dict({
@@ -94,7 +97,10 @@ async def _sync_article(story: ConsoleStory) -> None:
             "category": category,
             "image_url": img,
             "author": author_name,
+            "is_premium": story.is_pay_worthy,
             "tags": story.tags or [],
+            "issue_cluster_id": issue_cluster_id,
+            "console_story_id": story.id,
         }).save()
         logger.info("Synced article update for story %s", story.id)
     else:
@@ -117,8 +123,11 @@ async def _sync_article(story: ConsoleStory) -> None:
             source_url=marker,
             is_internal=True,
             is_featured=False,
+            is_premium=story.is_pay_worthy,
+            console_story_id=story.id,
             published_at=datetime.now(timezone.utc),
             tags=story.tags or [],
+            issue_cluster_id=issue_cluster_id,
         )
         logger.info("Created public article for story %s (slug=%s)", story.id, slug)
 
@@ -296,6 +305,10 @@ async def update_story(
     if is_editorial:
         update_data["is_featured"] = body.is_featured
 
+    # Stamp published_at on first publish.
+    if update_data.get("status") == ConsoleStoryStatus.publish and not story.published_at:
+        update_data["published_at"] = datetime.now(timezone.utc)
+
     await story.update_from_dict(update_data).save()
     await story.fetch_related("author")
     # Keep the public Article in sync if this story is already published
@@ -304,6 +317,11 @@ async def update_story(
             await _sync_article(story)
         except Exception as exc:
             logger.error("Failed to sync article for story %s: %s", story_id, exc)
+        try:
+            from app.contributors.service import on_story_published
+            await on_story_published(story)
+        except Exception as exc:
+            logger.error("Failed contributor publish hook for story %s: %s", story_id, exc)
     return _story_to_read(story)
 
 
@@ -329,6 +347,9 @@ async def update_story_status(
         update["scheduled_for"] = body.scheduled_for
     if body.editor_note is not None:
         update["editor_note"] = body.editor_note
+    # Stamp published_at on first publish.
+    if body.status == ConsoleStoryStatus.publish and not story.published_at:
+        update["published_at"] = datetime.now(timezone.utc)
 
     await story.update_from_dict(update).save()
     await story.fetch_related("author")
@@ -337,6 +358,11 @@ async def update_story_status(
             await _sync_article(story)
         except Exception as exc:
             logger.error("Failed to sync article for story %s: %s", story_id, exc)
+        try:
+            from app.contributors.service import on_story_published
+            await on_story_published(story)
+        except Exception as exc:
+            logger.error("Failed contributor publish hook for story %s: %s", story_id, exc)
     return _story_to_read(story)
 
 
@@ -425,6 +451,7 @@ async def _issue_to_read(cluster: IssueCluster) -> IssueClusterRead:
         category=cluster.category,
         status=cluster.status.value,
         breaking_order=cluster.breaking_order,
+        breaking_expires_at=cluster.breaking_expires_at.isoformat() if cluster.breaking_expires_at else None,
         cover_image=cluster.cover_image,
         story_count=story_count,
         created_by_id=str(cluster.created_by_id),
@@ -432,6 +459,31 @@ async def _issue_to_read(cluster: IssueCluster) -> IssueClusterRead:
         created_at=cluster.created_at.isoformat(),
         updated_at=cluster.updated_at.isoformat(),
     )
+
+
+async def _sync_breaking_nav(cluster: IssueCluster) -> None:
+    """Auto-manage NavMenu breaking entry when a cluster's status changes."""
+    nav_slug = f"breaking-issue-{cluster.slug}"
+    if cluster.status == IssueClusterStatus.breaking:
+        existing = await NavMenu.filter(slug=nav_slug).first()
+        if existing:
+            existing.label = cluster.name
+            existing.href = f"/issues/{cluster.slug}"
+            existing.position = cluster.breaking_order or 100
+            existing.is_active = True
+            await existing.save()
+        else:
+            await NavMenu.create(
+                label=cluster.name,
+                slug=nav_slug,
+                href=f"/issues/{cluster.slug}",
+                area=NavArea.main,
+                item_type=NavItemType.breaking,
+                position=cluster.breaking_order or 100,
+                is_active=True,
+            )
+    else:
+        await NavMenu.filter(slug=nav_slug).update(is_active=False)
 
 
 # ── Issue cluster endpoints ────────────────────────────────────────────────────
@@ -461,6 +513,14 @@ async def create_issue(
         slug = f"{base}-{counter}"
         counter += 1
 
+    from datetime import datetime as _dt
+    expires_at = None
+    if body.breaking_expires_at:
+        try:
+            expires_at = _dt.fromisoformat(body.breaking_expires_at)
+        except ValueError:
+            pass
+
     cluster = await IssueCluster.create(
         name=body.name,
         slug=slug,
@@ -468,10 +528,12 @@ async def create_issue(
         category=body.category,
         status=body.status,
         breaking_order=body.breaking_order,
+        breaking_expires_at=expires_at,
         cover_image=body.cover_image,
         created_by_id=current_user.id,
         assigned_editor_id=body.assigned_editor_id or None,
     )
+    await _sync_breaking_nav(cluster)
     return await _issue_to_read(cluster)
 
 
@@ -496,6 +558,7 @@ async def update_issue(
     if not cluster:
         raise HTTPException(status_code=404, detail="Issue cluster not found")
 
+    from datetime import datetime as _dt
     if body.name is not None:
         cluster.name = body.name
     if body.description is not None:
@@ -506,12 +569,18 @@ async def update_issue(
         cluster.status = body.status
     if body.breaking_order is not None:
         cluster.breaking_order = body.breaking_order
+    if body.breaking_expires_at is not None:
+        try:
+            cluster.breaking_expires_at = _dt.fromisoformat(body.breaking_expires_at)  # type: ignore[assignment]
+        except ValueError:
+            cluster.breaking_expires_at = None  # type: ignore[assignment]
     if body.cover_image is not None:
         cluster.cover_image = body.cover_image
     if body.assigned_editor_id is not None:
         cluster.assigned_editor_id = body.assigned_editor_id or None  # type: ignore[assignment]
 
     await cluster.save()
+    await _sync_breaking_nav(cluster)
     return await _issue_to_read(cluster)
 
 

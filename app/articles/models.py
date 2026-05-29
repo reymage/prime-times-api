@@ -24,9 +24,14 @@ class Article(Model):
     is_premium = fields.BooleanField(default=False)
     author_avatar = fields.CharField(max_length=500, null=True)
     view_count = fields.IntField(default=0)
+    # FK back to the ConsoleStory that originated this article (null for external imports).
+    console_story_id = fields.UUIDField(null=True, index=True)
     published_at = fields.DatetimeField()
     created_at = fields.DatetimeField(auto_now_add=True)
     tags = fields.JSONField(default=list)
+    issue_cluster = fields.ForeignKeyField(
+        "models.IssueCluster", related_name="articles", null=True
+    )
 
     class Meta:
         table = "articles"

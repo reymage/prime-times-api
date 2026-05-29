@@ -53,6 +53,8 @@ class ArticleCard(BaseModel):
     published_at: datetime
     time_ago: str = ""
     tags: list[str] = []
+    issue_cluster_slug: str | None = None
+    issue_cluster_name: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
