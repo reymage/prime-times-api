@@ -56,9 +56,11 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:8080"
 
     # ── Email ─────────────────────────────────────────────────────────────────
-    EMAIL_PROVIDER: str = "brevo"
+    # Set EMAIL_PROVIDER=brevo and BREVO_API_KEY=<key> in .env to send real emails.
+    # Default "console" logs emails to stdout (safe for development).
+    EMAIL_PROVIDER: str = "console"
     BREVO_API_KEY: str = ""
-    EMAIL_FROM_ADDRESS: str = "support@getweva.com"
+    EMAIL_FROM_ADDRESS: str = "noreply@primetimesdaily.com"
     EMAIL_FROM_NAME: str = "Prime Times Daily"
 
     # ── AI / LLM ──────────────────────────────────────────────────────────────
