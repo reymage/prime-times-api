@@ -592,6 +592,8 @@ async def delete_issue(
     cluster = await IssueCluster.filter(id=issue_id).first()
     if not cluster:
         raise HTTPException(status_code=404, detail="Issue cluster not found")
+    # Remove the associated breaking nav entry so the main site nav stays clean
+    await NavMenu.filter(slug=f"breaking-issue-{cluster.slug}").delete()
     await cluster.delete()
 
 
