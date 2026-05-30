@@ -34,6 +34,7 @@ TORTOISE_ORM = {
                 "app.ai.models",
                 "app.console.models",
                 "app.contributors.models",
+                "app.notifications.models",
                 "aerich.models",
             ],
             "default_connection": "default",

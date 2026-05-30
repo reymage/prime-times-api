@@ -30,8 +30,33 @@ from app.console.schemas import (
     SectionData,
 )
 from app.core.roles import UserRole, role_has_at_least
+from app.notifications.models import NotificationType
+from app.notifications.service import create_notification
 
 logger = logging.getLogger(__name__)
+
+
+async def _notify_story(
+    story: "ConsoleStory",
+    notif_type: NotificationType,
+    title: str,
+    body: str,
+    sender_id: uuid.UUID | None = None,
+) -> None:
+    """Fire a notification to the story author; swallow all errors."""
+    try:
+        author_id = story.author_id
+        if author_id and str(author_id) != str(sender_id):
+            await create_notification(
+                recipient_id=author_id,
+                notif_type=notif_type,
+                title=title,
+                body=body,
+                link=f"/console/editor/{story.id}",
+                sender_id=sender_id,
+            )
+    except Exception as exc:
+        logger.warning("notification failed for story %s: %s", story.id, exc)
 
 
 # ── Publish pipeline helpers ──────────────────────────────────────────────────
@@ -309,8 +334,10 @@ async def update_story(
     if update_data.get("status") == ConsoleStoryStatus.publish and not story.published_at:
         update_data["published_at"] = datetime.now(timezone.utc)
 
+    old_status = story.status
     await story.update_from_dict(update_data).save()
     await story.fetch_related("author")
+    title_snippet = (story.title or "Untitled")[:80]
     # Keep the public Article in sync if this story is already published
     if update_data.get("status") == ConsoleStoryStatus.publish or story.status == ConsoleStoryStatus.publish:
         try:
@@ -322,6 +349,30 @@ async def update_story(
             await on_story_published(story)
         except Exception as exc:
             logger.error("Failed contributor publish hook for story %s: %s", story_id, exc)
+        if update_data.get("status") == ConsoleStoryStatus.publish and old_status != ConsoleStoryStatus.publish:
+            await _notify_story(
+                story, NotificationType.story_published,
+                "Your story is now live",
+                f'"{title_snippet}" has been published.',
+                sender_id=current_user.id,
+            )
+    if (
+        update_data.get("status") == ConsoleStoryStatus.pending_review
+        and old_status != ConsoleStoryStatus.pending_review
+    ):
+        await _notify_story(
+            story, NotificationType.story_in_review,
+            "Story submitted for review",
+            f'"{title_snippet}" is now in review.',
+            sender_id=current_user.id,
+        )
+    if body.editor_note is not None and is_editorial:
+        await _notify_story(
+            story, NotificationType.story_note,
+            "Editor left a note on your story",
+            f'"{title_snippet}": {body.editor_note[:120]}',
+            sender_id=current_user.id,
+        )
     return _story_to_read(story)
 
 
@@ -353,6 +404,7 @@ async def update_story_status(
 
     await story.update_from_dict(update).save()
     await story.fetch_related("author")
+    title_snippet = (story.title or "Untitled")[:80]
     if body.status == ConsoleStoryStatus.publish:
         try:
             await _sync_article(story)
@@ -363,6 +415,26 @@ async def update_story_status(
             await on_story_published(story)
         except Exception as exc:
             logger.error("Failed contributor publish hook for story %s: %s", story_id, exc)
+        await _notify_story(
+            story, NotificationType.story_published,
+            "Your story is now live",
+            f'"{title_snippet}" has been published.',
+            sender_id=current_user.id,
+        )
+    elif body.status == ConsoleStoryStatus.pending_review:
+        await _notify_story(
+            story, NotificationType.story_in_review,
+            "Story submitted for review",
+            f'"{title_snippet}" is now in review.',
+            sender_id=current_user.id,
+        )
+    elif body.status == ConsoleStoryStatus.draft and body.editor_note:
+        await _notify_story(
+            story, NotificationType.story_note,
+            "Editor left a note on your story",
+            f'"{title_snippet}": {body.editor_note[:120]}',
+            sender_id=current_user.id,
+        )
     return _story_to_read(story)
 
 

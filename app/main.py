@@ -17,6 +17,7 @@ from app.contributors.router import router as contributors_router
 from app.gating.router import router as gating_router
 from app.issues.router import router as issues_router
 from app.nav.router import router as nav_router
+from app.notifications.router import router as notifications_router
 from app.config import settings
 from app.database import TORTOISE_ORM
 from app.middleware import SecurityHeadersMiddleware
@@ -93,6 +94,7 @@ app.include_router(gating_router)
 app.include_router(issues_router)
 app.include_router(console_router)
 app.include_router(contributors_router)
+app.include_router(notifications_router)
 app.include_router(ai_router, prefix="/api")
 
 

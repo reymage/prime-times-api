@@ -88,6 +88,8 @@ from app.contributors.schemas import (
 )
 from app.contributors import service
 from app.core.roles import UserRole, role_has_at_least
+from app.notifications.models import NotificationType
+from app.notifications.service import create_notification as _notify
 
 router = APIRouter(prefix="/api")
 
@@ -470,6 +472,29 @@ async def review_application(
         raise HTTPException(400, "status must be 'approved' or 'rejected'")
 
     applicant = await app.applicant
+    try:
+        if body.status == ApplicationStatus.approved:
+            await _notify(
+                recipient_id=applicant.id,
+                notif_type=NotificationType.application_approved,
+                title="Your contributor application was approved",
+                body="Welcome to the Prime Times Daily contributor programme. You can now submit stories.",
+                link="/console",
+                sender_id=admin.id,
+            )
+        else:
+            note_preview = f" Reviewer note: {body.reviewer_note}" if body.reviewer_note else ""
+            await _notify(
+                recipient_id=applicant.id,
+                notif_type=NotificationType.application_rejected,
+                title="Your contributor application was not approved",
+                body=f"Unfortunately your application was not approved at this time.{note_preview}",
+                link="/console",
+                sender_id=admin.id,
+            )
+    except Exception:
+        pass
+
     return ApplicationAdminRead(
         id=app.id,
         applicant_id=applicant.id,
@@ -708,6 +733,29 @@ async def review_earning(
         if earning.pool_total_reads > 0
         else Decimal("0")
     )
+    try:
+        amount_str = f"₦{float(earning.gross_amount):,.2f}"
+        if body.status == EarningStatus.approved:
+            await _notify(
+                recipient_id=contributor.id,
+                notif_type=NotificationType.earning_approved,
+                title="Earning approved",
+                body=f"{amount_str} earning from the period {period.week_start.date()} – {period.week_end.date()} has been approved.",
+                link="/console/earnings",
+                sender_id=admin.id,
+            )
+        else:
+            await _notify(
+                recipient_id=contributor.id,
+                notif_type=NotificationType.earning_rejected,
+                title="Earning not approved",
+                body=f"An earning of {amount_str} was not approved. Note: {body.note or '—'}",
+                link="/console/earnings",
+                sender_id=admin.id,
+            )
+    except Exception:
+        pass
+
     return EarningAdminRead(
         id=earning.id,
         contributor_id=contributor.id,
@@ -882,6 +930,31 @@ async def review_payout_request(
             await service.reject_payout_request(payout, admin, body.note)
     except ValueError as exc:
         raise HTTPException(409, str(exc))
+
+    try:
+        contributor = await payout.contributor
+        amount_str = f"₦{float(payout.requested_amount):,.2f}"
+        if body.action == "approve":
+            await _notify(
+                recipient_id=contributor.id,
+                notif_type=NotificationType.payout_approved,
+                title="Payout request approved",
+                body=f"Your payout request of {amount_str} has been approved and will be processed shortly.",
+                link="/console/payout-requests",
+                sender_id=admin.id,
+            )
+        else:
+            await _notify(
+                recipient_id=contributor.id,
+                notif_type=NotificationType.payout_rejected,
+                title="Payout request not approved",
+                body=f"Your payout request of {amount_str} was not approved. Reason: {body.note}",
+                link="/console/payout-requests",
+                sender_id=admin.id,
+            )
+    except Exception:
+        pass
+
     return await _payout_to_admin_read(payout)
 
 
@@ -923,6 +996,21 @@ async def mark_payout_paid(
         await service.mark_payout_paid(payout, admin)
     except ValueError as exc:
         raise HTTPException(409, str(exc))
+
+    try:
+        contributor = await payout.contributor
+        amount_str = f"₦{float(payout.requested_amount):,.2f}"
+        await _notify(
+            recipient_id=contributor.id,
+            notif_type=NotificationType.payout_paid,
+            title="Payment sent",
+            body=f"Your payout of {amount_str} has been disbursed to your bank account.",
+            link="/console/payout-requests",
+            sender_id=admin.id,
+        )
+    except Exception:
+        pass
+
     return await _payout_to_admin_read(payout)
 
 
