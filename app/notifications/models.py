@@ -24,6 +24,7 @@ class NotificationType(str, enum.Enum):
     payout_approved = "payout_approved"
     payout_rejected = "payout_rejected"
     payout_paid = "payout_paid"
+    payout_failed = "payout_failed"
     # Admin broadcast
     admin_message = "admin_message"
 

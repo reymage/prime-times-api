@@ -59,6 +59,32 @@ async def _notify_story(
         logger.warning("notification failed for story %s: %s", story.id, exc)
 
 
+async def _notify_editorial_team(
+    story: "ConsoleStory",
+    notif_type: NotificationType,
+    title: str,
+    body: str,
+    sender_id: uuid.UUID | None = None,
+) -> None:
+    """Notify all active editors/admins about a story event; swallow all errors."""
+    try:
+        from app.auth.models import User
+        editors = await User.filter(is_active=True).values_list("id", "role")
+        editorial_roles = {"editor", "admin", "super_admin"}
+        for editor_id, role in editors:
+            if role in editorial_roles and str(editor_id) != str(sender_id):
+                await create_notification(
+                    recipient_id=editor_id,
+                    notif_type=notif_type,
+                    title=title,
+                    body=body,
+                    link="/console/reviews",
+                    sender_id=sender_id,
+                )
+    except Exception as exc:
+        logger.warning("editorial notification failed for story %s: %s", story.id, exc)
+
+
 # ── Publish pipeline helpers ──────────────────────────────────────────────────
 
 def _slugify(text: str, suffix: str) -> str:
@@ -335,6 +361,7 @@ async def update_story(
         update_data["published_at"] = datetime.now(timezone.utc)
 
     old_status = story.status
+    old_editor_note = story.editor_note
     await story.update_from_dict(update_data).save()
     await story.fetch_related("author")
     title_snippet = (story.title or "Untitled")[:80]
@@ -366,7 +393,14 @@ async def update_story(
             f'"{title_snippet}" is now in review.',
             sender_id=current_user.id,
         )
-    if body.editor_note is not None and is_editorial:
+        author_name = (story.author.display_name or story.author.email) if story.author else "A contributor"
+        await _notify_editorial_team(
+            story, NotificationType.story_submitted,
+            "Story ready for review",
+            f'"{title_snippet}" by {author_name} is awaiting editorial review.',
+            sender_id=current_user.id,
+        )
+    if body.editor_note is not None and is_editorial and body.editor_note != old_editor_note:
         await _notify_story(
             story, NotificationType.story_note,
             "Editor left a note on your story",
@@ -393,6 +427,7 @@ async def update_story_status(
     if body.status == ConsoleStoryStatus.publish and current_user.role not in _PUBLISH_ROLES:
         raise HTTPException(status_code=403, detail="Only editors can publish stories")
 
+    old_status = story.status
     update: dict = {"status": body.status}
     if body.scheduled_for:
         update["scheduled_for"] = body.scheduled_for
@@ -421,11 +456,26 @@ async def update_story_status(
             f'"{title_snippet}" has been published.',
             sender_id=current_user.id,
         )
-    elif body.status == ConsoleStoryStatus.pending_review:
+    elif body.status == ConsoleStoryStatus.pending_review and old_status != ConsoleStoryStatus.pending_review:
         await _notify_story(
             story, NotificationType.story_in_review,
             "Story submitted for review",
             f'"{title_snippet}" is now in review.',
+            sender_id=current_user.id,
+        )
+        author_name = (story.author.display_name or story.author.email) if story.author else "A contributor"
+        await _notify_editorial_team(
+            story, NotificationType.story_submitted,
+            "Story ready for review",
+            f'"{title_snippet}" by {author_name} is awaiting editorial review.',
+            sender_id=current_user.id,
+        )
+    elif body.status == ConsoleStoryStatus.draft and old_status == ConsoleStoryStatus.pending_review:
+        note_str = f" Note: {body.editor_note[:120]}" if body.editor_note else ""
+        await _notify_story(
+            story, NotificationType.story_rejected,
+            "Story returned for revisions",
+            f'"{title_snippet}" has been sent back for revisions.{note_str}',
             sender_id=current_user.id,
         )
     elif body.status == ConsoleStoryStatus.draft and body.editor_note:

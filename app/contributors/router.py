@@ -193,7 +193,7 @@ async def submit_application(
     ).first()
     if existing:
         raise HTTPException(409, "You already have a pending or approved application.")
-    return await ContributorApplication.create(
+    application = await ContributorApplication.create(
         applicant_id=current_user.id,
         bio=body.bio,
         portfolio_url=body.portfolio_url,
@@ -202,6 +202,25 @@ async def submit_application(
         kyc_document_type=body.kyc_document_type,
         kyc_document_ref=body.kyc_document_ref,
     )
+    # Notify all admins of the new application
+    try:
+        from app.auth.models import User as UserModel
+        from app.core.roles import role_has_at_least
+        admins = await UserModel.filter(is_active=True).values_list("id", "role")
+        name = current_user.display_name or current_user.email
+        for admin_id, role in admins:
+            if role_has_at_least(role, UserRole.admin) and str(admin_id) != str(current_user.id):
+                await _notify(
+                    recipient_id=admin_id,
+                    notif_type=NotificationType.application_submitted,
+                    title="New contributor application",
+                    body=f"{name} has submitted a contributor application.",
+                    link="/console/admin/applications",
+                    sender_id=current_user.id,
+                )
+    except Exception:
+        pass
+    return application
 
 
 @router.get(
@@ -803,7 +822,7 @@ async def bulk_approve_earnings(
         except ValueError:
             pass
 
-    # Send one consolidated email per contributor.
+    # Send one consolidated email + in-app notification per contributor.
     for contributor_id_str, total in approved_by_contributor.items():
         from app.auth.models import User as UserModel
         user = await UserModel.get_or_none(id=contributor_id_str)
@@ -814,6 +833,17 @@ async def bulk_approve_earnings(
                 f"{total:,.2f}",
                 f"{settings.FRONTEND_URL}/console/earnings",
             ))
+            try:
+                await _notify(
+                    recipient_id=user.id,
+                    notif_type=NotificationType.earning_approved,
+                    title="Earnings approved",
+                    body=f"₦{float(total):,.2f} in earnings for this period have been approved. You can now request a payout.",
+                    link="/console/earnings",
+                    sender_id=admin.id,
+                )
+            except Exception:
+                pass
 
     return {"approved": count, "period_id": str(body.period_id)}
 
@@ -996,20 +1026,6 @@ async def mark_payout_paid(
         await service.mark_payout_paid(payout, admin)
     except ValueError as exc:
         raise HTTPException(409, str(exc))
-
-    try:
-        contributor = await payout.contributor
-        amount_str = f"₦{float(payout.requested_amount):,.2f}"
-        await _notify(
-            recipient_id=contributor.id,
-            notif_type=NotificationType.payout_paid,
-            title="Payment sent",
-            body=f"Your payout of {amount_str} has been disbursed to your bank account.",
-            link="/console/payout-requests",
-            sender_id=admin.id,
-        )
-    except Exception:
-        pass
 
     return await _payout_to_admin_read(payout)
 

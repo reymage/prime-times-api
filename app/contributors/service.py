@@ -443,9 +443,11 @@ async def distribute_period(period: PaywallRevenuePeriod, distributor: User) -> 
         period.id, pool, rows_written, pool_total_reads,
     )
 
-    # Send each earning contributor a notification email (non-blocking).
+    # Send each earning contributor a notification email + in-app notification.
     from app.config import settings
     from app.core.email import email_client
+    from app.notifications.models import NotificationType
+    from app.notifications.service import create_notification as _notify
     week_start_str = period.week_start.strftime("%d %b %Y")
     week_end_str = period.week_end.strftime("%d %b %Y")
     for contributor_id in reads_by_contributor:
@@ -463,6 +465,18 @@ async def distribute_period(period: PaywallRevenuePeriod, distributor: User) -> 
             f"{earning.gross_amount:,.2f}",
             f"{settings.FRONTEND_URL}/console/earnings",
         ))
+        try:
+            amount_str = f"₦{float(earning.gross_amount):,.2f}"
+            await _notify(
+                recipient_id=user.id,
+                notif_type=NotificationType.earning_distributed,
+                title="Earnings distributed for this period",
+                body=f"{amount_str} has been distributed for the period {week_start_str} – {week_end_str}. Review and approve to request payout.",
+                link="/console/earnings",
+                sender_id=distributor.id,
+            )
+        except Exception:
+            pass
 
     return rows_written
 
@@ -586,7 +600,7 @@ async def mark_payout_paid(payout: "PayoutRequest", admin: User) -> None:
     """Manual mark-paid — used when Paystack is not configured or as fallback."""
     if payout.status not in (PayoutRequestStatus.approved, PayoutRequestStatus.processing):
         raise ValueError(f"Cannot mark as paid a payout with status '{payout.status}'")
-    await _complete_payout(payout)
+    await _complete_payout(payout, sender_id=admin.id)
 
 
 async def initiate_payout_transfer(payout: "PayoutRequest", transfer_code: str) -> None:
@@ -612,18 +626,32 @@ async def fail_payout(payout: "PayoutRequest", reason: Optional[str] = None) -> 
         payout.admin_note = f"Transfer failed: {reason}"
     await payout.save()
 
-    from app.core.email import email_client
     contributor = await payout.contributor
+    from app.core.email import email_client
     await _fire_email(email_client.send_payout_failed(
         contributor.email,
         contributor.display_name or contributor.email,
         f"{payout.requested_amount:,.2f}",
         reason,
     ))
+    try:
+        from app.notifications.models import NotificationType
+        from app.notifications.service import create_notification as _notify
+        amount_str = f"₦{float(payout.requested_amount):,.2f}"
+        reason_str = f" Reason: {reason}" if reason else ""
+        await _notify(
+            recipient_id=contributor.id,
+            notif_type=NotificationType.payout_failed,
+            title="Payout transfer failed",
+            body=f"Your payout of {amount_str} could not be processed.{reason_str} Please contact support.",
+            link="/console/payout-requests",
+        )
+    except Exception:
+        pass
 
 
-async def _complete_payout(payout: "PayoutRequest") -> None:
-    """Shared logic: move payout to paid, cascade earnings, send confirmation email."""
+async def _complete_payout(payout: "PayoutRequest", sender_id=None) -> None:
+    """Shared logic: move payout to paid, cascade earnings, send confirmation email + notification."""
     payout.status = PayoutRequestStatus.paid
     payout.paid_at = datetime.now(timezone.utc)
     await payout.save()
@@ -643,3 +671,17 @@ async def _complete_payout(payout: "PayoutRequest") -> None:
         snapshot.get("bank_name", ""),
         snapshot.get("account_number_masked", "****"),
     ))
+    try:
+        from app.notifications.models import NotificationType
+        from app.notifications.service import create_notification as _notify
+        amount_str = f"₦{float(payout.requested_amount):,.2f}"
+        await _notify(
+            recipient_id=contributor.id,
+            notif_type=NotificationType.payout_paid,
+            title="Payment sent",
+            body=f"Your payout of {amount_str} has been disbursed to your bank account.",
+            link="/console/payout-requests",
+            sender_id=sender_id,
+        )
+    except Exception:
+        pass

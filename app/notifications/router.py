@@ -18,14 +18,10 @@ def _require_admin(user: User = Depends(current_active_user)) -> User:
     return user
 
 
-async def _to_read(n: Notification) -> NotificationRead:
+def _build_read(n: Notification, sender: User | None = None) -> NotificationRead:
     sender_name: str | None = None
-    if n.sender_id:
-        try:
-            sender = await n.sender
-            sender_name = sender.display_name or sender.email
-        except Exception:
-            pass
+    if sender is not None:
+        sender_name = sender.display_name or sender.email
     return NotificationRead(
         id=n.id,
         notif_type=n.notif_type,
@@ -38,6 +34,17 @@ async def _to_read(n: Notification) -> NotificationRead:
     )
 
 
+async def _to_read(n: Notification) -> NotificationRead:
+    """Single-notification read — lazily resolves sender (used by mark_read)."""
+    sender: User | None = None
+    if n.sender_id:
+        try:
+            sender = await n.sender
+        except Exception:
+            pass
+    return _build_read(n, sender)
+
+
 @router.get("", response_model=NotificationList)
 async def list_notifications(
     unread_only: bool = Query(False),
@@ -45,16 +52,22 @@ async def list_notifications(
     limit: int = Query(20, ge=1, le=100),
     current_user: User = Depends(current_active_user),
 ) -> NotificationList:
-    qs = Notification.filter(recipient_id=current_user.id)
-    if unread_only:
-        qs = qs.filter(is_read=False)
+    base_qs = Notification.filter(recipient_id=current_user.id)
+    filtered_qs = base_qs.filter(is_read=False) if unread_only else base_qs
 
-    total = await Notification.filter(recipient_id=current_user.id).count()
-    unread_count = await Notification.filter(recipient_id=current_user.id, is_read=False).count()
-    rows = await qs.order_by("-created_at").offset(skip).limit(limit)
+    total = await filtered_qs.count()
+    unread_count = await base_qs.filter(is_read=False).count()
+    rows = await filtered_qs.order_by("-created_at").offset(skip).limit(limit)
+
+    # Batch-fetch all senders in one query to avoid N+1
+    sender_ids = list({n.sender_id for n in rows if n.sender_id})
+    sender_map: dict[str, User] = {}
+    if sender_ids:
+        senders = await User.filter(id__in=sender_ids)
+        sender_map = {str(s.id): s for s in senders}
 
     return NotificationList(
-        notifications=[await _to_read(n) for n in rows],
+        notifications=[_build_read(n, sender_map.get(str(n.sender_id))) for n in rows],
         total=total,
         unread_count=unread_count,
     )
