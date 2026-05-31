@@ -36,3 +36,18 @@ class Article(Model):
     class Meta:
         table = "articles"
         ordering = ["-published_at"]
+
+
+class SavedArticle(Model):
+    id = fields.IntField(pk=True)
+    user: fields.ForeignKeyRelation = fields.ForeignKeyField(
+        "models.User", related_name="saved_articles", on_delete=fields.CASCADE
+    )
+    article: fields.ForeignKeyRelation[Article] = fields.ForeignKeyField(
+        "models.Article", related_name="saves", on_delete=fields.CASCADE
+    )
+    saved_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "saved_articles"
+        unique_together = (("user_id", "article_id"),)

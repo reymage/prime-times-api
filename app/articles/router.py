@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from tortoise.expressions import Q
 
-from app.articles.models import Article
+from app.articles.models import Article, SavedArticle
 from app.articles.schemas import ArticleCard, ArticleDetail, FeedResponse
-from app.auth.dependencies import fastapi_users
+from app.auth.dependencies import fastapi_users, current_active_user
 from app.auth.models import User, UserPreferences
 from app.ai.cache import cache_get, cache_set
 
@@ -225,6 +225,52 @@ async def search_articles(
         "pages": pages,
     }
     return JSONResponse(content=data, headers=_PUBLIC_HEADERS)
+
+
+@router.post("/articles/{slug}/save", tags=["saved"])
+async def save_article_endpoint(slug: str, current_user: User = Depends(current_active_user)):
+    article = await Article.get_or_none(slug=slug)
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    await SavedArticle.get_or_create(user_id=current_user.id, article_id=article.id)
+    return {"saved": True}
+
+
+@router.delete("/articles/{slug}/save", tags=["saved"])
+async def unsave_article_endpoint(slug: str, current_user: User = Depends(current_active_user)):
+    article = await Article.get_or_none(slug=slug)
+    if article:
+        await SavedArticle.filter(user_id=current_user.id, article_id=article.id).delete()
+    return {"saved": False}
+
+
+@router.get("/articles/{slug}/save-status", tags=["saved"])
+async def get_save_status_endpoint(slug: str, current_user: User = Depends(current_active_user)):
+    article = await Article.get_or_none(slug=slug)
+    if not article:
+        return {"saved": False}
+    saved = await SavedArticle.filter(user_id=current_user.id, article_id=article.id).exists()
+    return {"saved": saved}
+
+
+@router.get("/users/me/saved", tags=["saved"])
+async def get_my_saved_articles(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=50),
+    current_user: User = Depends(current_active_user),
+):
+    total = await SavedArticle.filter(user_id=current_user.id).count()
+    pages = max(1, (total + limit - 1) // limit)
+    offset = (page - 1) * limit
+    saves = (
+        await SavedArticle.filter(user_id=current_user.id)
+        .prefetch_related("article")
+        .order_by("-saved_at")
+        .offset(offset)
+        .limit(limit)
+    )
+    articles = [ArticleCard.model_validate(s.article).model_dump(mode="json") for s in saves]
+    return {"articles": articles, "total": total, "page": page, "pages": pages}
 
 
 @router.get("/authors/{author_name}")
