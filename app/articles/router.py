@@ -67,35 +67,35 @@ async def get_feed(
 
     qs = Article.all()
     if category:
-        qs = qs.filter(category=category)
+        qs = qs.filter(category__iexact=category)
     if city:
         qs = qs.filter(tags__contains=city) | Article.all().filter(category__icontains=city)
         if category:
-            qs = Article.all().filter(category=category)
+            qs = Article.all().filter(category__iexact=category)
 
     total = await qs.count()
     pages = max(1, (total + limit - 1) // limit)
     offset = (page - 1) * limit
 
     if active_topics:
-        personalized = True
         in_topic = (
             await qs.filter(category__in=active_topics)
             .order_by("-published_at")
             .limit(limit)
             .offset(offset)
         )
-        if len(in_topic) < limit:
-            in_ids = [a.id for a in in_topic]
-            extra = await (
-                qs.exclude(id__in=in_ids)
-                .order_by("-published_at")
-                .limit(limit - len(in_topic))
-                .offset(max(0, offset - await qs.filter(category__in=active_topics).count()))
-            )
-            articles = list(in_topic) + list(extra)
+        in_ids = [a.id for a in in_topic]
+        extra = await (
+            qs.exclude(id__in=in_ids)
+            .order_by("-published_at")
+            .limit(max(0, limit - len(in_topic)))
+        )
+        articles = list(in_topic) + list(extra)
+        if articles:
+            personalized = True
         else:
-            articles = list(in_topic)
+            # No results from topics — fall back to unfiltered
+            articles = await qs.order_by("-published_at").limit(limit).offset(offset)
     else:
         articles = await qs.order_by("-published_at").limit(limit).offset(offset)
 
