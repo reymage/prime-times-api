@@ -36,12 +36,15 @@ Admin surface (role >= admin):
 Story pay-worthy gating (role >= editor):
   PATCH /api/admin/stories/{story_id}/pay-worthy
 """
+import csv
+import io
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app.auth.dependencies import current_active_user
 from app.auth.models import User
@@ -190,7 +193,7 @@ async def submit_application(
     # Rejected applicants may re-apply (a new row is created).
     existing = await ContributorApplication.filter(
         applicant_id=current_user.id,
-        status__in=[ApplicationStatus.pending, ApplicationStatus.approved],
+        status__in=[ApplicationStatus.pending, ApplicationStatus.under_review, ApplicationStatus.approved],
     ).first()
     if existing:
         raise HTTPException(409, "You already have a pending or approved application.")
@@ -481,6 +484,37 @@ async def create_payout_request(
 # ADMIN — APPLICATIONS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _app_to_admin_read(a: ContributorApplication, applicant) -> ApplicationAdminRead:
+    return ApplicationAdminRead(
+        id=a.id,
+        applicant_id=applicant.id,
+        applicant_email=applicant.email,
+        applicant_name=applicant.display_name,
+        first_name=a.first_name,
+        last_name=a.last_name,
+        dob=a.dob,
+        gender=a.gender,
+        state_of_residence=a.state_of_residence,
+        employment_status=a.employment_status,
+        phone=a.phone,
+        bio=a.bio,
+        portfolio_url=a.portfolio_url,
+        handle_x=a.handle_x,
+        handle_fb=a.handle_fb,
+        handle_li=a.handle_li,
+        pitch=a.pitch,
+        best_piece_url=a.best_piece_url,
+        best_work_file_url=a.best_work_file_url,
+        reporting_methods=a.reporting_methods or [],
+        primary_vertical=a.primary_vertical,
+        secondary_vertical=a.secondary_vertical,
+        status=a.status,
+        submitted_at=a.submitted_at,
+        reviewed_at=a.reviewed_at,
+        reviewer_note=a.reviewer_note,
+    )
+
+
 @router.get(
     "/admin/contributor/applications",
     response_model=list[ApplicationAdminRead],
@@ -499,35 +533,73 @@ async def list_applications(
     result = []
     for a in apps:
         applicant = await a.applicant
-        result.append(ApplicationAdminRead(
-            id=a.id,
-            applicant_id=applicant.id,
-            applicant_email=applicant.email,
-            applicant_name=applicant.display_name,
-            first_name=a.first_name,
-            last_name=a.last_name,
-            dob=a.dob,
-            gender=a.gender,
-            state_of_residence=a.state_of_residence,
-            employment_status=a.employment_status,
-            phone=a.phone,
-            bio=a.bio,
-            portfolio_url=a.portfolio_url,
-            handle_x=a.handle_x,
-            handle_fb=a.handle_fb,
-            handle_li=a.handle_li,
-            pitch=a.pitch,
-            best_piece_url=a.best_piece_url,
-            best_work_file_url=a.best_work_file_url,
-            reporting_methods=a.reporting_methods or [],
-            primary_vertical=a.primary_vertical,
-            secondary_vertical=a.secondary_vertical,
-            status=a.status,
-            submitted_at=a.submitted_at,
-            reviewed_at=a.reviewed_at,
-            reviewer_note=a.reviewer_note,
-        ))
+        result.append(_app_to_admin_read(a, applicant))
     return result
+
+
+@router.get(
+    "/admin/contributor/applications/export",
+    tags=["admin"],
+)
+async def export_applications(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    _admin: User = Depends(_require_admin),
+) -> StreamingResponse:
+    """Export applications as CSV, optionally filtered by submission date range."""
+    qs = ContributorApplication.all()
+    if from_date:
+        qs = qs.filter(submitted_at__gte=datetime(from_date.year, from_date.month, from_date.day, tzinfo=timezone.utc))
+    if to_date:
+        qs = qs.filter(submitted_at__lte=datetime(to_date.year, to_date.month, to_date.day, 23, 59, 59, tzinfo=timezone.utc))
+    apps = await qs.order_by("submitted_at")
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Reference", "Submitted At", "Status",
+        "First Name", "Last Name", "Email", "DOB", "Gender", "State", "Employment", "Phone",
+        "Bio", "Pitch", "Portfolio URL", "Handle X", "Handle FB", "Handle LinkedIn",
+        "Best Piece URL", "Has Uploaded File",
+        "Primary Vertical", "Secondary Vertical", "Reporting Methods",
+        "Reviewer Note",
+    ])
+    for a in apps:
+        applicant = await a.applicant
+        ref = f"PTD-{a.submitted_at.year}-{str(a.id).replace('-', '')[:5].upper()}"
+        writer.writerow([
+            ref,
+            a.submitted_at.strftime("%Y-%m-%d %H:%M"),
+            a.status.value,
+            a.first_name or "",
+            a.last_name or "",
+            applicant.email,
+            a.dob or "",
+            a.gender or "",
+            a.state_of_residence or "",
+            a.employment_status or "",
+            a.phone or "",
+            a.bio,
+            a.pitch or "",
+            a.portfolio_url or "",
+            a.handle_x or "",
+            a.handle_fb or "",
+            a.handle_li or "",
+            a.best_piece_url or "",
+            "Yes" if a.best_work_file_url else "No",
+            a.primary_vertical or "",
+            a.secondary_vertical or "",
+            ", ".join(a.reporting_methods or []),
+            a.reviewer_note or "",
+        ])
+    output.seek(0)
+    today = date.today().isoformat()
+    filename = f"applications_export_{today}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.patch(
@@ -543,18 +615,31 @@ async def review_application(
     app = await ContributorApplication.get_or_none(id=application_id)
     if not app:
         raise HTTPException(404, "Application not found")
-    if app.status != ApplicationStatus.pending:
-        raise HTTPException(409, "Application has already been reviewed")
-    if body.status == ApplicationStatus.approved:
-        await service.approve_application(app, admin, body.reviewer_note)
-    elif body.status == ApplicationStatus.rejected:
-        await service.reject_application(app, admin, body.reviewer_note)
-    else:
-        raise HTTPException(400, "status must be 'approved' or 'rejected'")
 
-    applicant = await app.applicant
-    try:
-        if body.status == ApplicationStatus.approved:
+    if body.status == ApplicationStatus.under_review:
+        if app.status != ApplicationStatus.pending:
+            raise HTTPException(409, "Only pending applications can be moved to editorial review")
+        app.status = ApplicationStatus.under_review
+        await app.save()
+        applicant = await app.applicant
+        try:
+            await _notify(
+                recipient_id=applicant.id,
+                notif_type=NotificationType.application_under_review,
+                title="Your application is under review",
+                body="Our editorial team has started reviewing your contributor application. You'll hear from us soon.",
+                link="/auth/contributor-status",
+                sender_id=admin.id,
+            )
+        except Exception:
+            pass
+
+    elif body.status == ApplicationStatus.approved:
+        if app.status not in (ApplicationStatus.pending, ApplicationStatus.under_review):
+            raise HTTPException(409, "Application has already been decided")
+        await service.approve_application(app, admin, body.reviewer_note)
+        applicant = await app.applicant
+        try:
             await _notify(
                 recipient_id=applicant.id,
                 notif_type=NotificationType.application_approved,
@@ -563,7 +648,15 @@ async def review_application(
                 link="/console",
                 sender_id=admin.id,
             )
-        else:
+        except Exception:
+            pass
+
+    elif body.status == ApplicationStatus.rejected:
+        if app.status not in (ApplicationStatus.pending, ApplicationStatus.under_review):
+            raise HTTPException(409, "Application has already been decided")
+        await service.reject_application(app, admin, body.reviewer_note)
+        applicant = await app.applicant
+        try:
             note_preview = f" Reviewer note: {body.reviewer_note}" if body.reviewer_note else ""
             await _notify(
                 recipient_id=applicant.id,
@@ -573,37 +666,86 @@ async def review_application(
                 link="/console",
                 sender_id=admin.id,
             )
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    return ApplicationAdminRead(
-        id=app.id,
-        applicant_id=applicant.id,
-        applicant_email=applicant.email,
-        applicant_name=applicant.display_name,
-        first_name=app.first_name,
-        last_name=app.last_name,
-        dob=app.dob,
-        gender=app.gender,
-        state_of_residence=app.state_of_residence,
-        employment_status=app.employment_status,
-        phone=app.phone,
-        bio=app.bio,
-        portfolio_url=app.portfolio_url,
-        handle_x=app.handle_x,
-        handle_fb=app.handle_fb,
-        handle_li=app.handle_li,
-        pitch=app.pitch,
-        best_piece_url=app.best_piece_url,
-        best_work_file_url=app.best_work_file_url,
-        reporting_methods=app.reporting_methods or [],
-        primary_vertical=app.primary_vertical,
-        secondary_vertical=app.secondary_vertical,
-        status=app.status,
-        submitted_at=app.submitted_at,
-        reviewed_at=app.reviewed_at,
-        reviewer_note=app.reviewer_note,
+    else:
+        raise HTTPException(400, "status must be 'under_review', 'approved', or 'rejected'")
+
+    applicant = await app.applicant
+    return _app_to_admin_read(app, applicant)
+
+
+@router.get(
+    "/admin/contributor/applications/{application_id}/download",
+    tags=["admin"],
+)
+async def download_application(
+    application_id: uuid.UUID,
+    _admin: User = Depends(_require_admin),
+) -> PlainTextResponse:
+    """Download a single application as a plain-text summary file."""
+    app = await ContributorApplication.get_or_none(id=application_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+    applicant = await app.applicant
+    ref = f"PTD-{app.submitted_at.year}-{str(app.id).replace('-', '')[:5].upper()}"
+
+    lines = [
+        "PRIME TIMES DAILY — CONTRIBUTOR APPLICATION",
+        f"Reference:  {ref}",
+        f"Submitted:  {app.submitted_at.strftime('%d %B %Y, %H:%M UTC')}",
+        f"Status:     {app.status.value.upper()}",
+        "",
+        "── IDENTITY ──────────────────────────────────",
+        f"Name:       {(app.first_name or '')} {(app.last_name or '')}".strip(),
+        f"Email:      {applicant.email}",
+        f"DOB:        {app.dob or '—'}",
+        f"Gender:     {app.gender or '—'}",
+        f"State:      {app.state_of_residence or '—'}",
+        f"Employment: {app.employment_status or '—'}",
+        f"Phone:      {app.phone or '—'}",
+        "",
+        "── STORY ─────────────────────────────────────",
+        f"Bio:\n  {app.bio}",
+        f"Pitch:     {app.pitch or '—'}",
+        f"Portfolio: {app.portfolio_url or '—'}",
+        f"X:         {app.handle_x or '—'}",
+        f"Facebook:  {app.handle_fb or '—'}",
+        f"LinkedIn:  {app.handle_li or '—'}",
+        "",
+        "── WORK SAMPLES ──────────────────────────────",
+        f"Best piece: {app.best_piece_url or '—'}",
+        f"Uploaded:   {app.best_work_file_url or '—'}",
+        "",
+        "── BEAT ──────────────────────────────────────",
+        f"Primary vertical:    {app.primary_vertical or '—'}",
+        f"Secondary vertical:  {app.secondary_vertical or '—'}",
+        f"Reporting methods:   {', '.join(app.reporting_methods or []) or '—'}",
+    ]
+    if app.reviewer_note:
+        lines += ["", "── REVIEWER NOTE ─────────────────────────────", app.reviewer_note]
+
+    content = "\n".join(lines)
+    filename = f"application_{ref}.txt"
+    return PlainTextResponse(
+        content=content,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.delete(
+    "/admin/contributor/applications/{application_id}",
+    status_code=204,
+    tags=["admin"],
+)
+async def delete_application(
+    application_id: uuid.UUID,
+    _admin: User = Depends(_require_admin),
+) -> None:
+    deleted = await ContributorApplication.filter(id=application_id).delete()
+    if not deleted:
+        raise HTTPException(404, "Application not found")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

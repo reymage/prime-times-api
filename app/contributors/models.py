@@ -7,6 +7,7 @@ from tortoise.models import Model
 
 class ApplicationStatus(str, enum.Enum):
     pending = "pending"
+    under_review = "under_review"
     approved = "approved"
     rejected = "rejected"
 

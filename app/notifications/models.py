@@ -14,6 +14,7 @@ class NotificationType(str, enum.Enum):
     story_note = "story_note"
     # Contributor application
     application_submitted = "application_submitted"
+    application_under_review = "application_under_review"
     application_approved = "application_approved"
     application_rejected = "application_rejected"
     # Earnings
