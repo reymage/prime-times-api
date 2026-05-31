@@ -19,6 +19,10 @@ class User(Model):
     phone = fields.CharField(max_length=20, null=True)
     state = fields.CharField(max_length=100, null=True)
     is_diaspora = fields.BooleanField(default=False)
+    bio = fields.TextField(null=True)
+    linkedin_url = fields.CharField(max_length=300, null=True)
+    twitter_url = fields.CharField(max_length=300, null=True)
+    public_email = fields.CharField(max_length=320, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 

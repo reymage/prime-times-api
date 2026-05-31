@@ -242,9 +242,17 @@ async def get_author_profile(
     offset = (page - 1) * limit
     articles = await qs.order_by("-published_at").limit(limit).offset(offset)
     avatar = next((a.author_avatar for a in articles if a.author_avatar), None)
+
+    # Try to look up the user record for richer profile data
+    user = await User.get_or_none(display_name=author_name)
+
     data = {
         "name": author_name,
-        "avatar": avatar,
+        "avatar": (user.avatar_url if user and user.avatar_url else None) or avatar,
+        "bio": user.bio if user else None,
+        "linkedin_url": user.linkedin_url if user else None,
+        "twitter_url": user.twitter_url if user else None,
+        "public_email": user.public_email if user else None,
         "article_count": total,
         "articles": [ArticleCard.model_validate(a).model_dump(mode="json") for a in articles],
         "page": page,

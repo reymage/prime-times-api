@@ -16,6 +16,10 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     phone: str | None = None
     state: str | None = None
     is_diaspora: bool = False
+    bio: str | None = None
+    linkedin_url: str | None = None
+    twitter_url: str | None = None
+    public_email: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -39,6 +43,10 @@ class UserUpdate(schemas.BaseUserUpdate):
     phone: str | None = None
     state: str | None = None
     is_diaspora: bool | None = None
+    bio: str | None = None
+    linkedin_url: str | None = None
+    twitter_url: str | None = None
+    public_email: str | None = None
 
 
 # ── Admin-only schemas ────────────────────────────────────────────────────

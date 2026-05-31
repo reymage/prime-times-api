@@ -29,5 +29,7 @@ class AdminBroadcastCreate(BaseModel):
     title: str
     body: str
     link: str | None = None
-    # If empty → send to all users with role >= contributor
+    # If roles is non-empty, send only to those roles; otherwise send to all >= contributor
+    roles: list[str] = []
+    # If recipient_ids is non-empty it takes precedence over roles
     recipient_ids: list[uuid.UUID] = []

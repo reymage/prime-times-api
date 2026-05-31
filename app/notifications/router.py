@@ -1,6 +1,8 @@
+import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from starlette.responses import StreamingResponse
 
 from app.auth.dependencies import current_active_user
 from app.auth.models import User
@@ -105,22 +107,64 @@ async def mark_all_read(
     return {"marked_read": updated}
 
 
+@router.delete("/{notification_id}", status_code=204)
+async def delete_notification(
+    notification_id: uuid.UUID,
+    current_user: User = Depends(current_active_user),
+) -> None:
+    n = await Notification.get_or_none(id=notification_id, recipient_id=current_user.id)
+    if not n:
+        raise HTTPException(404, "Notification not found")
+    await n.delete()
+
+
+@router.get("/stream")
+async def notification_stream(
+    current_user: User = Depends(current_active_user),
+) -> StreamingResponse:
+    """SSE stream that pushes unread count when it changes. Replaces per-tab polling."""
+    uid = current_user.id
+
+    async def event_generator():
+        last_count = -1
+        try:
+            while True:
+                count = await Notification.filter(recipient_id=uid, is_read=False).count()
+                if count != last_count:
+                    yield f"data: {count}\n\n"
+                    last_count = count
+                else:
+                    yield ": heartbeat\n\n"
+                await asyncio.sleep(15)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post("/broadcast", status_code=201)
 async def admin_broadcast(
     body: AdminBroadcastCreate,
     admin: User = Depends(_require_admin),
 ) -> dict:
-    """Send an admin_message notification to specific users or all contributors."""
+    """Send an admin_message notification to specific users, specific roles, or all contributors."""
     if body.recipient_ids:
         ids = body.recipient_ids
     else:
         from app.auth.models import User as UserModel
-        from app.core.roles import UserRole, role_has_at_least
         users = await UserModel.filter(is_active=True).all()
-        ids = [
-            u.id for u in users
-            if role_has_at_least(u.role, UserRole.contributor) and u.id != admin.id
-        ]
+        if body.roles:
+            target_roles = set(body.roles)
+            ids = [u.id for u in users if u.role in target_roles and u.id != admin.id]
+        else:
+            ids = [
+                u.id for u in users
+                if role_has_at_least(u.role, UserRole.contributor) and u.id != admin.id
+            ]
 
     count = 0
     for rid in ids:

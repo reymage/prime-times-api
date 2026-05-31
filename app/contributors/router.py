@@ -90,6 +90,7 @@ from app.contributors import service
 from app.core.roles import UserRole, role_has_at_least
 from app.notifications.models import NotificationType
 from app.notifications.service import create_notification as _notify
+from app.ai.cache import cache_get, cache_set, cache_invalidate_prefix
 
 router = APIRouter(prefix="/api")
 
@@ -267,8 +268,14 @@ async def get_my_profile(
 async def get_my_eligibility(
     current_user: User = Depends(_require_contributor),
 ) -> EligibilityBreakdown:
+    cache_key = f"eligibility:{current_user.id}"
+    cached = await cache_get(cache_key)
+    if cached:
+        return EligibilityBreakdown(**cached)
     breakdown = await service.get_eligibility_breakdown(current_user)
-    return EligibilityBreakdown(**breakdown)
+    result = EligibilityBreakdown(**breakdown)
+    await cache_set(cache_key, result.model_dump(mode="json"), ttl=120)
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -283,6 +290,11 @@ async def get_my_eligibility(
 async def get_my_earnings(
     current_user: User = Depends(_require_contributor),
 ) -> EarningsSummary:
+    cache_key = f"earnings:{current_user.id}"
+    cached = await cache_get(cache_key)
+    if cached:
+        return EarningsSummary(**cached)
+
     raw = await ContributorEarning.filter(
         contributor_id=current_user.id
     ).prefetch_related("period").order_by("-created_at")
@@ -293,12 +305,14 @@ async def get_my_earnings(
 
     earnings = [_earning_to_read(e, await e.period) for e in raw]
 
-    return EarningsSummary(
+    summary = EarningsSummary(
         total_pending=total_pending or Decimal("0"),
         total_approved=total_approved or Decimal("0"),
         total_paid=total_paid or Decimal("0"),
         earnings=earnings,
     )
+    await cache_set(cache_key, summary.model_dump(mode="json"), ttl=90)
+    return summary
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -775,6 +789,8 @@ async def review_earning(
     except Exception:
         pass
 
+    await cache_invalidate_prefix(f"earnings:{contributor.id}")
+    await cache_invalidate_prefix(f"eligibility:{contributor.id}")
     return EarningAdminRead(
         id=earning.id,
         contributor_id=contributor.id,
@@ -845,6 +861,10 @@ async def bulk_approve_earnings(
             except Exception:
                 pass
 
+    # Bust cached earnings for everyone whose earnings changed
+    for cid_str in approved_by_contributor:
+        await cache_invalidate_prefix(f"earnings:{cid_str}")
+        await cache_invalidate_prefix(f"eligibility:{cid_str}")
     return {"approved": count, "period_id": str(body.period_id)}
 
 

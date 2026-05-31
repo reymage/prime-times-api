@@ -11,6 +11,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
 
+        # For API responses only serve data — no scripts, frames, or embedded resources
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+
         # Prevent MIME-type sniffing
         response.headers["X-Content-Type-Options"] = "nosniff"
 
