@@ -170,6 +170,9 @@ async def _persist_eligibility(profile: ContributorProfile, result: bool) -> boo
 
 async def approve_application(application: ContributorApplication, reviewer: User, note: Optional[str]) -> None:
     """Approve application and create ContributorProfile + upgrade user role."""
+    import secrets
+    from pwdlib import PasswordHash
+    from pwdlib.hashers.bcrypt import BcryptHasher
     from app.core.roles import UserRole
     from app.config import settings
     from app.core.email import email_client
@@ -180,17 +183,43 @@ async def approve_application(application: ContributorApplication, reviewer: Use
     application.reviewed_at = datetime.now(timezone.utc)
     await application.save()
 
-    applicant = await application.applicant
+    is_new_account = False
+    if application.applicant_id:
+        applicant = await application.applicant
+    else:
+        applicant = await User.get_or_none(email=application.email)
+        if applicant is None:
+            ph = PasswordHash([BcryptHasher()])
+            display = f"{application.first_name or ''} {application.last_name or ''}".strip() or None
+            applicant = await User.create(
+                email=application.email,
+                hashed_password=ph.hash(secrets.token_urlsafe(32)),
+                is_active=True,
+                is_verified=True,
+                display_name=display,
+                role=UserRole.contributor,
+            )
+            is_new_account = True
+        application.applicant_id = applicant.id
+        await application.save()
+
     await ContributorProfile.get_or_create(contributor_id=applicant.id)
     if applicant.role == UserRole.reader:
         applicant.role = UserRole.contributor
         await applicant.save()
 
-    await _fire_email(email_client.send_application_approved(
-        applicant.email,
-        applicant.display_name or applicant.email,
-        f"{settings.FRONTEND_URL}/console",
-    ))
+    if is_new_account:
+        await _fire_email(email_client.send_application_approved_new_account(
+            applicant.email,
+            applicant.display_name or applicant.email,
+            f"{settings.FRONTEND_URL}/auth/login",
+        ))
+    else:
+        await _fire_email(email_client.send_application_approved(
+            applicant.email,
+            applicant.display_name or applicant.email,
+            f"{settings.FRONTEND_URL}/console",
+        ))
 
 
 async def reject_application(application: ContributorApplication, reviewer: User, note: Optional[str]) -> None:
@@ -202,12 +231,15 @@ async def reject_application(application: ContributorApplication, reviewer: User
     application.reviewed_at = datetime.now(timezone.utc)
     await application.save()
 
-    applicant = await application.applicant
-    await _fire_email(email_client.send_application_rejected(
-        applicant.email,
-        applicant.display_name or applicant.email,
-        note,
-    ))
+    if application.applicant_id:
+        applicant = await application.applicant
+        to_email = applicant.email
+        to_name = applicant.display_name or applicant.email
+    else:
+        to_email = application.email or ""
+        to_name = f"{application.first_name or ''} {application.last_name or ''}".strip() or to_email
+
+    await _fire_email(email_client.send_application_rejected(to_email, to_name, note))
 
 
 # ─────────────────────────── first-publish hook ──────────────────────────────

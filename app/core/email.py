@@ -97,6 +97,16 @@ class EmailClient:
             html_body=_tpl_application_approved(to_name, console_url),
         )
 
+    async def send_application_approved_new_account(
+        self, to_email: str, to_name: str, login_url: str
+    ) -> None:
+        await self.send(
+            to_email,
+            to_name,
+            subject="Your Prime Times Daily contributor application is approved",
+            html_body=_tpl_application_approved_new_account(to_name, to_email, login_url),
+        )
+
     async def send_application_rejected(
         self, to_email: str, to_name: str, note: str | None
     ) -> None:
@@ -210,6 +220,22 @@ def _tpl_application_approved(name: str, console_url: str) -> str:
 <p>Great news — your application to join the <strong>Prime Times Daily</strong> contributor programme has been approved.</p>
 <p>You now have access to the contributor console where you can submit stories, track your earnings, and manage your payout details.</p>
 <p><a href="{console_url}">Go to your console</a></p>
+<p>Welcome to the team.</p>
+"""
+
+
+def _tpl_application_approved_new_account(name: str, email: str, login_url: str) -> str:
+    return f"""
+<p>Hi {name},</p>
+<p>Great news — your application to join the <strong>Prime Times Daily</strong> contributor programme has been approved.</p>
+<p>A contributor account has been created for you using this email address (<strong>{email}</strong>).</p>
+<p>To access your contributor console, please set your password first:</p>
+<ol>
+  <li>Go to <a href="{login_url}">{login_url}</a></li>
+  <li>Click <strong>Forgot password?</strong></li>
+  <li>Enter <strong>{email}</strong> to receive a password reset link</li>
+</ol>
+<p>Once you have set your password you can log in and start submitting stories.</p>
 <p>Welcome to the team.</p>
 """
 

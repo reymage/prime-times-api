@@ -187,18 +187,17 @@ async def _payout_to_admin_read(payout: PayoutRequest) -> PayoutRequestAdminRead
 )
 async def submit_application(
     body: ApplicationSubmit,
-    current_user: User = Depends(current_active_user),
 ) -> ContributorApplication:
-    # Block if a pending or approved application already exists.
+    # Block if an active application already exists for this email.
     # Rejected applicants may re-apply (a new row is created).
     existing = await ContributorApplication.filter(
-        applicant_id=current_user.id,
+        email=body.email,
         status__in=[ApplicationStatus.pending, ApplicationStatus.under_review, ApplicationStatus.approved],
     ).first()
     if existing:
-        raise HTTPException(409, "You already have a pending or approved application.")
+        raise HTTPException(409, "An application from this email address is already in progress or has been approved.")
     application = await ContributorApplication.create(
-        applicant_id=current_user.id,
+        email=body.email,
         first_name=body.first_name,
         last_name=body.last_name,
         dob=body.dob,
@@ -221,18 +220,17 @@ async def submit_application(
     # Notify all admins of the new application
     try:
         from app.auth.models import User as UserModel
-        from app.core.roles import role_has_at_least
         admins = await UserModel.filter(is_active=True).values_list("id", "role")
-        name = current_user.display_name or current_user.email
+        name = f"{body.first_name} {body.last_name}".strip() or body.email
         for admin_id, role in admins:
-            if role_has_at_least(role, UserRole.admin) and str(admin_id) != str(current_user.id):
+            if role_has_at_least(role, UserRole.admin):
                 await _notify(
                     recipient_id=admin_id,
                     notif_type=NotificationType.application_submitted,
                     title="New contributor application",
                     body=f"{name} has submitted a contributor application.",
                     link="/console/admin/applications",
-                    sender_id=current_user.id,
+                    sender_id=None,
                 )
     except Exception:
         pass
@@ -245,7 +243,6 @@ async def submit_application(
 )
 async def upload_best_work(
     file: UploadFile = File(...),
-    current_user: User = Depends(current_active_user),
 ) -> dict:
     from app.storage import ALLOWED_DOCUMENT_MIME_TYPES, MAX_DOCUMENT_BYTES, upload_document_to_r2, is_r2_configured
 
@@ -264,20 +261,21 @@ async def upload_best_work(
 
 
 @router.get(
-    "/contributor/application",
+    "/contributor/application/lookup",
     response_model=ApplicationRead,
     tags=["contributor"],
 )
-async def get_my_application(
-    current_user: User = Depends(current_active_user),
+async def lookup_application(
+    email: str = Query(...),
 ) -> ContributorApplication:
+    """Public endpoint — look up an application by the applicant's email address."""
     app = (
-        await ContributorApplication.filter(applicant_id=current_user.id)
+        await ContributorApplication.filter(email=email)
         .order_by("-submitted_at")
         .first()
     )
     if not app:
-        raise HTTPException(404, "No application found")
+        raise HTTPException(404, "No application found for this email address")
     return app
 
 
@@ -487,9 +485,11 @@ async def create_payout_request(
 def _app_to_admin_read(a: ContributorApplication, applicant) -> ApplicationAdminRead:
     return ApplicationAdminRead(
         id=a.id,
-        applicant_id=applicant.id,
-        applicant_email=applicant.email,
-        applicant_name=applicant.display_name,
+        applicant_id=applicant.id if applicant else None,
+        applicant_email=(applicant.email if applicant else None) or a.email,
+        applicant_name=(applicant.display_name if applicant else None) or (
+            f"{a.first_name or ''} {a.last_name or ''}".strip() or None
+        ),
         first_name=a.first_name,
         last_name=a.last_name,
         dob=a.dob,
@@ -532,7 +532,7 @@ async def list_applications(
     apps = await qs.offset(skip).limit(limit)
     result = []
     for a in apps:
-        applicant = await a.applicant
+        applicant = (await a.applicant) if a.applicant_id else None
         result.append(_app_to_admin_read(a, applicant))
     return result
 
@@ -565,7 +565,7 @@ async def export_applications(
         "Reviewer Note",
     ])
     for a in apps:
-        applicant = await a.applicant
+        applicant = (await a.applicant) if a.applicant_id else None
         ref = f"PTD-{a.submitted_at.year}-{str(a.id).replace('-', '')[:5].upper()}"
         writer.writerow([
             ref,
@@ -573,7 +573,7 @@ async def export_applications(
             a.status.value,
             a.first_name or "",
             a.last_name or "",
-            applicant.email,
+            (applicant.email if applicant else None) or a.email or "",
             a.dob or "",
             a.gender or "",
             a.state_of_residence or "",
@@ -621,58 +621,63 @@ async def review_application(
             raise HTTPException(409, "Only pending applications can be moved to editorial review")
         app.status = ApplicationStatus.under_review
         await app.save()
-        applicant = await app.applicant
-        try:
-            await _notify(
-                recipient_id=applicant.id,
-                notif_type=NotificationType.application_under_review,
-                title="Your application is under review",
-                body="Our editorial team has started reviewing your contributor application. You'll hear from us soon.",
-                link="/auth/contributor-status",
-                sender_id=admin.id,
-            )
-        except Exception:
-            pass
+        # Only send in-app notification if applicant has a user account
+        if app.applicant_id:
+            try:
+                applicant = await app.applicant
+                await _notify(
+                    recipient_id=applicant.id,
+                    notif_type=NotificationType.application_under_review,
+                    title="Your application is under review",
+                    body="Our editorial team has started reviewing your contributor application. You'll hear from us soon.",
+                    link="/auth/contributor-status",
+                    sender_id=admin.id,
+                )
+            except Exception:
+                pass
 
     elif body.status == ApplicationStatus.approved:
         if app.status not in (ApplicationStatus.pending, ApplicationStatus.under_review):
             raise HTTPException(409, "Application has already been decided")
         await service.approve_application(app, admin, body.reviewer_note)
-        applicant = await app.applicant
-        try:
-            await _notify(
-                recipient_id=applicant.id,
-                notif_type=NotificationType.application_approved,
-                title="Your contributor application was approved",
-                body="Welcome to the Prime Times Daily contributor programme. You can now submit stories.",
-                link="/console",
-                sender_id=admin.id,
-            )
-        except Exception:
-            pass
+        # approve_application may have created and linked a user account — reload
+        if app.applicant_id:
+            try:
+                applicant = await app.applicant
+                await _notify(
+                    recipient_id=applicant.id,
+                    notif_type=NotificationType.application_approved,
+                    title="Your contributor application was approved",
+                    body="Welcome to the Prime Times Daily contributor programme. You can now submit stories.",
+                    link="/console",
+                    sender_id=admin.id,
+                )
+            except Exception:
+                pass
 
     elif body.status == ApplicationStatus.rejected:
         if app.status not in (ApplicationStatus.pending, ApplicationStatus.under_review):
             raise HTTPException(409, "Application has already been decided")
         await service.reject_application(app, admin, body.reviewer_note)
-        applicant = await app.applicant
-        try:
-            note_preview = f" Reviewer note: {body.reviewer_note}" if body.reviewer_note else ""
-            await _notify(
-                recipient_id=applicant.id,
-                notif_type=NotificationType.application_rejected,
-                title="Your contributor application was not approved",
-                body=f"Unfortunately your application was not approved at this time.{note_preview}",
-                link="/console",
-                sender_id=admin.id,
-            )
-        except Exception:
-            pass
+        if app.applicant_id:
+            try:
+                applicant = await app.applicant
+                note_preview = f" Reviewer note: {body.reviewer_note}" if body.reviewer_note else ""
+                await _notify(
+                    recipient_id=applicant.id,
+                    notif_type=NotificationType.application_rejected,
+                    title="Your contributor application was not approved",
+                    body=f"Unfortunately your application was not approved at this time.{note_preview}",
+                    link="/console",
+                    sender_id=admin.id,
+                )
+            except Exception:
+                pass
 
     else:
         raise HTTPException(400, "status must be 'under_review', 'approved', or 'rejected'")
 
-    applicant = await app.applicant
+    applicant = (await app.applicant) if app.applicant_id else None
     return _app_to_admin_read(app, applicant)
 
 
@@ -688,8 +693,9 @@ async def download_application(
     app = await ContributorApplication.get_or_none(id=application_id)
     if not app:
         raise HTTPException(404, "Application not found")
-    applicant = await app.applicant
+    applicant = (await app.applicant) if app.applicant_id else None
     ref = f"PTD-{app.submitted_at.year}-{str(app.id).replace('-', '')[:5].upper()}"
+    display_email = (applicant.email if applicant else None) or app.email or "—"
 
     lines = [
         "PRIME TIMES DAILY — CONTRIBUTOR APPLICATION",
@@ -699,7 +705,7 @@ async def download_application(
         "",
         "── IDENTITY ──────────────────────────────────",
         f"Name:       {(app.first_name or '')} {(app.last_name or '')}".strip(),
-        f"Email:      {applicant.email}",
+        f"Email:      {display_email}",
         f"DOB:        {app.dob or '—'}",
         f"Gender:     {app.gender or '—'}",
         f"State:      {app.state_of_residence or '—'}",

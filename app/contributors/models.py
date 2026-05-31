@@ -55,8 +55,9 @@ class PlatformRewardSettings(Model):
 class ContributorApplication(Model):
     id = fields.UUIDField(pk=True, default=uuid.uuid4)
     applicant = fields.ForeignKeyField(
-        "models.User", related_name="contributor_applications", on_delete=fields.CASCADE
+        "models.User", related_name="contributor_applications", null=True, on_delete=fields.SET_NULL
     )
+    email = fields.CharField(max_length=200, null=True)
     # Step 1 — Identity
     first_name = fields.CharField(max_length=100, null=True)
     last_name = fields.CharField(max_length=100, null=True)

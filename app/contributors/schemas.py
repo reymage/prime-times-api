@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.contributors.models import (
     ApplicationStatus,
@@ -16,6 +16,7 @@ from app.contributors.models import (
 # ── Contributor application ───────────────────────────────────────────────────
 
 class ApplicationSubmit(BaseModel):
+    email: EmailStr
     # Step 1 — Identity
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
@@ -58,6 +59,9 @@ class ApplicationSubmit(BaseModel):
 
 class ApplicationRead(BaseModel):
     id: uuid.UUID
+    email: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     status: ApplicationStatus
     submitted_at: datetime
     reviewed_at: Optional[datetime] = None
@@ -68,8 +72,8 @@ class ApplicationRead(BaseModel):
 
 class ApplicationAdminRead(BaseModel):
     id: uuid.UUID
-    applicant_id: uuid.UUID
-    applicant_email: str
+    applicant_id: Optional[uuid.UUID] = None
+    applicant_email: Optional[str] = None
     applicant_name: Optional[str]
     # Step 1
     first_name: Optional[str]
