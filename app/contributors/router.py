@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
 from app.auth.dependencies import current_active_user
 from app.auth.models import User
@@ -196,12 +196,24 @@ async def submit_application(
         raise HTTPException(409, "You already have a pending or approved application.")
     application = await ContributorApplication.create(
         applicant_id=current_user.id,
+        first_name=body.first_name,
+        last_name=body.last_name,
+        dob=body.dob,
+        gender=body.gender,
+        state_of_residence=body.state_of_residence,
+        employment_status=body.employment_status,
+        phone=body.phone,
         bio=body.bio,
         portfolio_url=body.portfolio_url,
-        coverage_areas=body.coverage_areas,
-        verticals=body.verticals,
-        kyc_document_type=body.kyc_document_type,
-        kyc_document_ref=body.kyc_document_ref,
+        handle_x=body.handle_x,
+        handle_fb=body.handle_fb,
+        handle_li=body.handle_li,
+        pitch=body.pitch,
+        best_piece_url=body.best_piece_url,
+        best_work_file_url=body.best_work_file_url,
+        reporting_methods=body.reporting_methods,
+        primary_vertical=body.primary_vertical,
+        secondary_vertical=body.secondary_vertical,
     )
     # Notify all admins of the new application
     try:
@@ -222,6 +234,30 @@ async def submit_application(
     except Exception:
         pass
     return application
+
+
+@router.post(
+    "/contributor/upload-best-work",
+    tags=["contributor"],
+)
+async def upload_best_work(
+    file: UploadFile = File(...),
+    current_user: User = Depends(current_active_user),
+) -> dict:
+    from app.storage import ALLOWED_DOCUMENT_MIME_TYPES, MAX_DOCUMENT_BYTES, upload_document_to_r2, is_r2_configured
+
+    if file.content_type not in ALLOWED_DOCUMENT_MIME_TYPES:
+        raise HTTPException(415, "Only PDF or DOCX files are accepted")
+
+    data = await file.read()
+    if len(data) > MAX_DOCUMENT_BYTES:
+        raise HTTPException(413, "File must be under 10 MB")
+
+    if not is_r2_configured():
+        raise HTTPException(503, "File storage is not configured")
+
+    url = await upload_document_to_r2(data, file.content_type, folder="applications")
+    return {"url": url}
 
 
 @router.get(
@@ -468,12 +504,24 @@ async def list_applications(
             applicant_id=applicant.id,
             applicant_email=applicant.email,
             applicant_name=applicant.display_name,
+            first_name=a.first_name,
+            last_name=a.last_name,
+            dob=a.dob,
+            gender=a.gender,
+            state_of_residence=a.state_of_residence,
+            employment_status=a.employment_status,
+            phone=a.phone,
             bio=a.bio,
             portfolio_url=a.portfolio_url,
-            coverage_areas=a.coverage_areas,
-            verticals=a.verticals,
-            kyc_document_type=a.kyc_document_type,
-            kyc_document_ref=a.kyc_document_ref,
+            handle_x=a.handle_x,
+            handle_fb=a.handle_fb,
+            handle_li=a.handle_li,
+            pitch=a.pitch,
+            best_piece_url=a.best_piece_url,
+            best_work_file_url=a.best_work_file_url,
+            reporting_methods=a.reporting_methods or [],
+            primary_vertical=a.primary_vertical,
+            secondary_vertical=a.secondary_vertical,
             status=a.status,
             submitted_at=a.submitted_at,
             reviewed_at=a.reviewed_at,
@@ -533,12 +581,24 @@ async def review_application(
         applicant_id=applicant.id,
         applicant_email=applicant.email,
         applicant_name=applicant.display_name,
+        first_name=app.first_name,
+        last_name=app.last_name,
+        dob=app.dob,
+        gender=app.gender,
+        state_of_residence=app.state_of_residence,
+        employment_status=app.employment_status,
+        phone=app.phone,
         bio=app.bio,
         portfolio_url=app.portfolio_url,
-        coverage_areas=app.coverage_areas,
-        verticals=app.verticals,
-        kyc_document_type=app.kyc_document_type,
-        kyc_document_ref=app.kyc_document_ref,
+        handle_x=app.handle_x,
+        handle_fb=app.handle_fb,
+        handle_li=app.handle_li,
+        pitch=app.pitch,
+        best_piece_url=app.best_piece_url,
+        best_work_file_url=app.best_work_file_url,
+        reporting_methods=app.reporting_methods or [],
+        primary_vertical=app.primary_vertical,
+        secondary_vertical=app.secondary_vertical,
         status=app.status,
         submitted_at=app.submitted_at,
         reviewed_at=app.reviewed_at,

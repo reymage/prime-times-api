@@ -14,6 +14,14 @@ ALLOWED_MIME_TYPES: frozenset[str] = frozenset({
     "image/svg+xml",
 })
 
+ALLOWED_DOCUMENT_MIME_TYPES: frozenset[str] = frozenset({
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+})
+
+MAX_DOCUMENT_BYTES = 10 * 1024 * 1024  # 10 MB
+
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
@@ -55,6 +63,20 @@ async def upload_to_r2(data: bytes, content_type: str, folder: str = "media") ->
     elif content_type == "image/svg+xml":
         ext = ".svg"
 
+    key = f"{folder}/{uuid.uuid4().hex}{ext}"
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, partial(_upload_sync, data, content_type, key))
+    return f"{settings.R2_PUBLIC_URL.rstrip('/')}/{key}"
+
+
+async def upload_document_to_r2(data: bytes, content_type: str, folder: str = "documents") -> str:
+    """Upload a PDF or DOCX to R2 and return the public CDN URL."""
+    ext_map = {
+        "application/pdf": ".pdf",
+        "application/msword": ".doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    }
+    ext = ext_map.get(content_type, ".bin")
     key = f"{folder}/{uuid.uuid4().hex}{ext}"
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, partial(_upload_sync, data, content_type, key))

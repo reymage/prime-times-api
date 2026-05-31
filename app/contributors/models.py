@@ -56,13 +56,34 @@ class ContributorApplication(Model):
     applicant = fields.ForeignKeyField(
         "models.User", related_name="contributor_applications", on_delete=fields.CASCADE
     )
+    # Step 1 — Identity
+    first_name = fields.CharField(max_length=100, null=True)
+    last_name = fields.CharField(max_length=100, null=True)
+    dob = fields.CharField(max_length=20, null=True)
+    gender = fields.CharField(max_length=50, null=True)
+    state_of_residence = fields.CharField(max_length=100, null=True)
+    employment_status = fields.CharField(max_length=50, null=True)
+    phone = fields.CharField(max_length=30, null=True)
+    # Step 2 — Story & social
     bio = fields.TextField()
     portfolio_url = fields.CharField(max_length=500, null=True)
+    handle_x = fields.CharField(max_length=100, null=True)
+    handle_fb = fields.CharField(max_length=300, null=True)
+    handle_li = fields.CharField(max_length=300, null=True)
+    pitch = fields.CharField(max_length=280, null=True)
+    # Step 3 — Work samples
+    best_piece_url = fields.CharField(max_length=500, null=True)
+    best_work_file_url = fields.CharField(max_length=500, null=True)
+    # Step 4 — Beat
+    reporting_methods = fields.JSONField(default=list)
+    primary_vertical = fields.CharField(max_length=100, null=True)
+    secondary_vertical = fields.CharField(max_length=100, null=True)
+    # Legacy fields preserved for existing records
     coverage_areas = fields.JSONField(default=list)
     verticals = fields.JSONField(default=list)
-    # KYC — reference only (no file storage in this phase)
-    kyc_document_type = fields.CharField(max_length=50, null=True)   # nin | bvn | passport | drivers_license
-    kyc_document_ref = fields.CharField(max_length=200, null=True)    # document number/reference
+    kyc_document_type = fields.CharField(max_length=50, null=True)
+    kyc_document_ref = fields.CharField(max_length=200, null=True)
+    # Review state
     status = fields.CharEnumField(
         ApplicationStatus, default=ApplicationStatus.pending, max_length=20
     )
