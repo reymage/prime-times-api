@@ -25,7 +25,7 @@ Super-admin only:
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.auth.backends import auth_backend
 from app.auth.dependencies import (
@@ -47,6 +47,7 @@ from app.auth.schemas import (
     UserUpdate,
 )
 from app.core.roles import UserRole, role_has_at_least
+from app.storage import ALLOWED_MIME_TYPES, MAX_UPLOAD_BYTES, is_r2_configured, upload_to_r2
 
 router = APIRouter(prefix="/api")
 
@@ -99,6 +100,27 @@ async def update_my_preferences(
     if data:
         await prefs.update_from_dict(data).save()
     return prefs
+
+
+# ── Avatar upload ─────────────────────────────────────────────────────────
+
+
+@router.post("/users/me/avatar", tags=["users"])
+async def upload_my_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(current_active_user),
+) -> dict:
+    if file.content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported image format. Use JPEG, PNG, or WebP.")
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="Image too large (max 10 MB).")
+    if not is_r2_configured():
+        raise HTTPException(status_code=503, detail="Storage not configured on this server.")
+    url = await upload_to_r2(data, file.content_type, folder="avatars")
+    current_user.avatar_url = url
+    await current_user.save(update_fields=["avatar_url"])
+    return {"avatar_url": url}
 
 
 # ── Admin: user management ────────────────────────────────────────────────

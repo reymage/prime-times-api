@@ -243,8 +243,11 @@ async def get_author_profile(
     articles = await qs.order_by("-published_at").limit(limit).offset(offset)
     avatar = next((a.author_avatar for a in articles if a.author_avatar), None)
 
-    # Try to look up the user record for richer profile data
+    # Try to look up the user record for richer profile data (case-insensitive)
     user = await User.get_or_none(display_name=author_name)
+    if not user:
+        candidates = await User.filter(display_name__iexact=author_name).limit(1)
+        user = candidates[0] if candidates else None
 
     data = {
         "name": author_name,
