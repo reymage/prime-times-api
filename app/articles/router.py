@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
+from tortoise.expressions import Q
 
 from app.articles.models import Article
 from app.articles.schemas import ArticleCard, ArticleDetail, FeedResponse
@@ -202,3 +203,51 @@ async def get_next_article(
 
     headers = _PUBLIC_HEADERS if is_public else {}
     return JSONResponse(content=data, headers=headers)
+
+
+@router.get("/search")
+async def search_articles(
+    q: str = Query(..., min_length=2),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=50),
+):
+    """Full-text search across article titles and excerpts."""
+    q = q.strip()
+    qs = Article.filter(Q(title__icontains=q) | Q(excerpt__icontains=q))
+    total = await qs.count()
+    pages = max(1, (total + limit - 1) // limit)
+    offset = (page - 1) * limit
+    articles = await qs.order_by("-published_at").limit(limit).offset(offset)
+    data = {
+        "articles": [ArticleCard.model_validate(a).model_dump(mode="json") for a in articles],
+        "total": total,
+        "page": page,
+        "pages": pages,
+    }
+    return JSONResponse(content=data, headers=_PUBLIC_HEADERS)
+
+
+@router.get("/authors/{author_name}")
+async def get_author_profile(
+    author_name: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(12, ge=1, le=50),
+):
+    """Public author profile — returns their info and recent articles."""
+    qs = Article.filter(author=author_name)
+    total = await qs.count()
+    if total == 0:
+        raise HTTPException(status_code=404, detail="Author not found")
+    pages = max(1, (total + limit - 1) // limit)
+    offset = (page - 1) * limit
+    articles = await qs.order_by("-published_at").limit(limit).offset(offset)
+    avatar = next((a.author_avatar for a in articles if a.author_avatar), None)
+    data = {
+        "name": author_name,
+        "avatar": avatar,
+        "article_count": total,
+        "articles": [ArticleCard.model_validate(a).model_dump(mode="json") for a in articles],
+        "page": page,
+        "pages": pages,
+    }
+    return JSONResponse(content=data, headers=_PUBLIC_HEADERS)
