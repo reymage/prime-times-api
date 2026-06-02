@@ -162,6 +162,11 @@ async def _persist_eligibility(profile: ContributorProfile, result: bool) -> boo
     profile.pay_worthy_eligible = result
     profile.eligibility_checked_at = datetime.now(timezone.utc)
     await profile.save()
+    try:
+        from app.ai.cache import cache_invalidate_prefix
+        await cache_invalidate_prefix(f"eligibility:{profile.contributor_id}")
+    except Exception:
+        pass
     logger.info(
         "eligibility contributor=%s result=%s", profile.contributor_id, result
     )

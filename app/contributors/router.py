@@ -369,8 +369,10 @@ async def submit_kyc(
     if existing and existing.status == KYCStatus.pending:
         raise HTTPException(409, "A verification submission is already under review")
 
+    is_resubmission = existing is not None
+
     if existing:
-        # Resubmission after rejection — update in place
+        # Resubmission after rejection — update in place and stamp resubmitted_at
         existing.full_name = body.full_name
         existing.nin_or_bvn = body.nin_or_bvn
         existing.document_type = body.document_type
@@ -379,6 +381,7 @@ async def submit_kyc(
         existing.reviewer_note = None
         existing.reviewed_at = None
         existing.reviewed_by_id = None
+        existing.resubmitted_at = datetime.now(timezone.utc)
         await existing.save()
         kyc = existing
     else:
@@ -390,17 +393,24 @@ async def submit_kyc(
             document_url=body.document_url,
         )
 
-    # Notify admins
+    # Notify admins — distinguish first submission from resubmission
     try:
         from app.auth.models import User as UserModel
         admins = await UserModel.filter(is_active=True).values_list("id", "role")
+        name = current_user.display_name or current_user.email
+        notif_title = "KYC resubmitted" if is_resubmission else "New KYC submission"
+        notif_body = (
+            f"{name} has resubmitted identity verification documents after rejection."
+            if is_resubmission
+            else f"{name} has submitted identity verification documents."
+        )
         for admin_id, role in admins:
             if role_has_at_least(role, UserRole.admin):
                 await _notify(
                     recipient_id=admin_id,
                     notif_type=NotificationType.kyc_submitted,
-                    title="New KYC submission",
-                    body=f"{current_user.display_name or current_user.email} has submitted identity verification documents.",
+                    title=notif_title,
+                    body=notif_body,
                     link="/console/admin/kyc",
                     sender_id=None,
                 )
@@ -413,6 +423,7 @@ async def submit_kyc(
         full_name=kyc.full_name,
         document_type=kyc.document_type,
         submitted_at=kyc.submitted_at,
+        resubmitted_at=kyc.resubmitted_at,
         reviewed_at=kyc.reviewed_at,
         reviewer_note=kyc.reviewer_note,
     )
@@ -435,6 +446,7 @@ async def get_my_kyc(
         full_name=kyc.full_name,
         document_type=kyc.document_type,
         submitted_at=kyc.submitted_at,
+        resubmitted_at=kyc.resubmitted_at,
         reviewed_at=kyc.reviewed_at,
         reviewer_note=kyc.reviewer_note,
     )

@@ -127,6 +127,7 @@ class ContributorKYC(Model):
     document_url = fields.CharField(max_length=500)
     reviewer_note = fields.CharField(max_length=1000, null=True)
     submitted_at = fields.DatetimeField(auto_now_add=True)
+    resubmitted_at = fields.DatetimeField(null=True)
     reviewed_at = fields.DatetimeField(null=True)
     reviewed_by = fields.ForeignKeyField(
         "models.User", related_name="kyc_reviews", null=True, on_delete=fields.SET_NULL

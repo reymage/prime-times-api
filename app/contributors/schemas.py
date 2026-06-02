@@ -128,6 +128,7 @@ class KYCRead(BaseModel):
     full_name: str
     document_type: KYCDocumentType
     submitted_at: datetime
+    resubmitted_at: Optional[datetime] = None
     reviewed_at: Optional[datetime] = None
     reviewer_note: Optional[str] = None
 
@@ -145,6 +146,7 @@ class KYCAdminRead(BaseModel):
     document_type: KYCDocumentType
     document_url: str
     submitted_at: datetime
+    resubmitted_at: Optional[datetime] = None
     reviewed_at: Optional[datetime] = None
     reviewer_note: Optional[str] = None
 

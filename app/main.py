@@ -30,7 +30,12 @@ limiter = Limiter(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
+    from app.scheduler import start_scheduler, stop_scheduler
+    start_scheduler()
+    try:
+        yield
+    finally:
+        stop_scheduler()
 
 
 app = FastAPI(
