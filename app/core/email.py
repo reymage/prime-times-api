@@ -88,13 +88,13 @@ class EmailClient:
     # ── Contributor reward emails ──────────────────────────────────────────
 
     async def send_application_approved(
-        self, to_email: str, to_name: str, console_url: str
+        self, to_email: str, to_name: str, kyc_url: str
     ) -> None:
         await self.send(
             to_email,
             to_name,
             subject="Your Prime Times Daily contributor application is approved",
-            html_body=_tpl_application_approved(to_name, console_url),
+            html_body=_tpl_application_approved(to_name, kyc_url),
         )
 
     async def send_application_approved_new_account(
@@ -105,6 +105,26 @@ class EmailClient:
             to_name,
             subject="Your Prime Times Daily contributor application is approved",
             html_body=_tpl_application_approved_new_account(to_name, to_email, login_url),
+        )
+
+    async def send_kyc_approved(
+        self, to_email: str, to_name: str, console_url: str
+    ) -> None:
+        await self.send(
+            to_email,
+            to_name,
+            subject="Identity verified — your contributor console is now open",
+            html_body=_tpl_kyc_approved(to_name, console_url),
+        )
+
+    async def send_kyc_rejected(
+        self, to_email: str, to_name: str, kyc_url: str, note: str | None
+    ) -> None:
+        await self.send(
+            to_email,
+            to_name,
+            subject="Action required: identity verification could not be completed",
+            html_body=_tpl_kyc_rejected(to_name, kyc_url, note),
         )
 
     async def send_application_rejected(
@@ -214,12 +234,13 @@ def _tpl_reset(name: str, url: str) -> str:
 
 # ── Contributor reward templates ───────────────────────────────────────────────
 
-def _tpl_application_approved(name: str, console_url: str) -> str:
+def _tpl_application_approved(name: str, kyc_url: str) -> str:
     return f"""
 <p>Hi {name},</p>
 <p>Great news — your application to join the <strong>Prime Times Daily</strong> contributor programme has been approved.</p>
-<p>You now have access to the contributor console where you can submit stories, track your earnings, and manage your payout details.</p>
-<p><a href="{console_url}">Go to your console</a></p>
+<p>The next step is to complete your identity verification (KYC) so we can unlock your contributor console.</p>
+<p><a href="{kyc_url}">Complete identity verification</a></p>
+<p>The process takes just a few minutes. You will need a valid government-issued ID (National ID, International Passport, Driver's Licence, or Voter's Card) and your NIN or BVN.</p>
 <p>Welcome to the team.</p>
 """
 
@@ -229,14 +250,34 @@ def _tpl_application_approved_new_account(name: str, email: str, login_url: str)
 <p>Hi {name},</p>
 <p>Great news — your application to join the <strong>Prime Times Daily</strong> contributor programme has been approved.</p>
 <p>A contributor account has been created for you using this email address (<strong>{email}</strong>).</p>
-<p>To access your contributor console, please set your password first:</p>
+<p>To complete your onboarding, please follow these steps:</p>
 <ol>
   <li>Go to <a href="{login_url}">{login_url}</a></li>
-  <li>Click <strong>Forgot password?</strong></li>
-  <li>Enter <strong>{email}</strong> to receive a password reset link</li>
+  <li>Click <strong>Forgot password?</strong> and enter <strong>{email}</strong> to set your password</li>
+  <li>Once logged in, complete your identity verification to unlock the contributor console</li>
 </ol>
-<p>Once you have set your password you can log in and start submitting stories.</p>
 <p>Welcome to the team.</p>
+"""
+
+
+def _tpl_kyc_approved(name: str, console_url: str) -> str:
+    return f"""
+<p>Hi {name},</p>
+<p>Your identity has been verified. You now have full access to the <strong>Prime Times Daily</strong> contributor console.</p>
+<p><a href="{console_url}">Go to your console</a></p>
+<p>You can now submit stories, track your earnings, and manage your payout details. Welcome aboard.</p>
+"""
+
+
+def _tpl_kyc_rejected(name: str, kyc_url: str, note: str | None) -> str:
+    note_block = f"<p><strong>Reason:</strong> {note}</p>" if note else ""
+    return f"""
+<p>Hi {name},</p>
+<p>We were unable to verify your identity using the documents you submitted to <strong>Prime Times Daily</strong>.</p>
+{note_block}
+<p>Please resubmit your identity verification with a clear photo of a valid government-issued ID and ensure your NIN or BVN is correct.</p>
+<p><a href="{kyc_url}">Resubmit identity verification</a></p>
+<p>If you have questions, please contact our team at <a href="mailto:contributors@primetimesdaily.com">contributors@primetimesdaily.com</a>.</p>
 """
 
 

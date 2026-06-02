@@ -26,6 +26,10 @@ class NotificationType(str, enum.Enum):
     payout_rejected = "payout_rejected"
     payout_paid = "payout_paid"
     payout_failed = "payout_failed"
+    # KYC
+    kyc_submitted = "kyc_submitted"
+    kyc_approved = "kyc_approved"
+    kyc_rejected = "kyc_rejected"
     # Admin broadcast
     admin_message = "admin_message"
 

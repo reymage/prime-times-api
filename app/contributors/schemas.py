@@ -8,6 +8,8 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from app.contributors.models import (
     ApplicationStatus,
     EarningStatus,
+    KYCDocumentType,
+    KYCStatus,
     PayoutRequestStatus,
     PeriodStatus,
 )
@@ -109,6 +111,54 @@ class ApplicationAdminRead(BaseModel):
 class ApplicationReview(BaseModel):
     status: ApplicationStatus  # approved | rejected
     reviewer_note: Optional[str] = Field(None, max_length=1000)
+
+
+# ── KYC ──────────────────────────────────────────────────────────────────────
+
+class KYCSubmit(BaseModel):
+    full_name: str = Field(..., min_length=2, max_length=300)
+    nin_or_bvn: str = Field(..., min_length=10, max_length=50)
+    document_type: KYCDocumentType
+    document_url: str = Field(..., max_length=500)
+
+
+class KYCRead(BaseModel):
+    id: uuid.UUID
+    status: KYCStatus
+    full_name: str
+    document_type: KYCDocumentType
+    submitted_at: datetime
+    reviewed_at: Optional[datetime] = None
+    reviewer_note: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class KYCAdminRead(BaseModel):
+    id: uuid.UUID
+    contributor_id: uuid.UUID
+    contributor_email: str
+    contributor_name: Optional[str]
+    status: KYCStatus
+    full_name: str
+    nin_or_bvn: str
+    document_type: KYCDocumentType
+    document_url: str
+    submitted_at: datetime
+    reviewed_at: Optional[datetime] = None
+    reviewer_note: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class KYCReview(BaseModel):
+    action: str = Field(..., pattern="^(approve|reject)$")
+    note: Optional[str] = Field(None, max_length=1000)
+
+
+class OnboardingStatus(BaseModel):
+    application_approved: bool
+    kyc_status: Optional[str] = None  # None | "pending" | "approved" | "rejected"
 
 
 # ── Platform reward settings ──────────────────────────────────────────────────

@@ -34,6 +34,19 @@ class PayoutRequestStatus(str, enum.Enum):
     failed = "failed"
 
 
+class KYCStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class KYCDocumentType(str, enum.Enum):
+    national_id = "national_id"
+    passport = "passport"
+    drivers_license = "drivers_license"
+    voter_card = "voter_card"
+
+
 class PlatformRewardSettings(Model):
     """Single-row table. Seed one row on first run; always update that row."""
     id = fields.IntField(pk=True)
@@ -99,6 +112,28 @@ class ContributorApplication(Model):
     class Meta:
         table = "contributor_applications"
         ordering = ["-submitted_at"]
+
+
+class ContributorKYC(Model):
+    """One KYC record per contributor. Submitted after application approval."""
+    id = fields.UUIDField(pk=True, default=uuid.uuid4)
+    contributor = fields.OneToOneField(
+        "models.User", related_name="kyc", on_delete=fields.CASCADE
+    )
+    status = fields.CharEnumField(KYCStatus, default=KYCStatus.pending, max_length=20)
+    full_name = fields.CharField(max_length=300)
+    nin_or_bvn = fields.CharField(max_length=50)
+    document_type = fields.CharEnumField(KYCDocumentType, max_length=30)
+    document_url = fields.CharField(max_length=500)
+    reviewer_note = fields.CharField(max_length=1000, null=True)
+    submitted_at = fields.DatetimeField(auto_now_add=True)
+    reviewed_at = fields.DatetimeField(null=True)
+    reviewed_by = fields.ForeignKeyField(
+        "models.User", related_name="kyc_reviews", null=True, on_delete=fields.SET_NULL
+    )
+
+    class Meta:
+        table = "contributor_kyc"
 
 
 class ContributorProfile(Model):

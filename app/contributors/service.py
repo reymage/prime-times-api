@@ -22,8 +22,10 @@ from app.contributors.models import (
     ApplicationStatus,
     ContributorApplication,
     ContributorEarning,
+    ContributorKYC,
     ContributorProfile,
     EarningStatus,
+    KYCStatus,
     PaywallReadEvent,
     PayoutRequest,
     PayoutRequestEarning,
@@ -169,7 +171,8 @@ async def _persist_eligibility(profile: ContributorProfile, result: bool) -> boo
 # ─────────────────────────── application helpers ─────────────────────────────
 
 async def approve_application(application: ContributorApplication, reviewer: User, note: Optional[str]) -> None:
-    """Approve application and create ContributorProfile + upgrade user role."""
+    """Approve application, create account if needed, create ContributorProfile.
+    Role stays 'reader' until KYC is verified."""
     import secrets
     from pwdlib import PasswordHash
     from pwdlib.hashers.bcrypt import BcryptHasher
@@ -191,23 +194,23 @@ async def approve_application(application: ContributorApplication, reviewer: Use
         if applicant is None:
             ph = PasswordHash([BcryptHasher()])
             display = f"{application.first_name or ''} {application.last_name or ''}".strip() or None
+            # Role stays reader until KYC is approved
             applicant = await User.create(
                 email=application.email,
                 hashed_password=ph.hash(secrets.token_urlsafe(32)),
                 is_active=True,
                 is_verified=True,
                 display_name=display,
-                role=UserRole.contributor,
+                role=UserRole.reader,
             )
             is_new_account = True
         application.applicant_id = applicant.id
         await application.save()
 
+    # ContributorProfile existence signals application approval; role stays reader until KYC.
     await ContributorProfile.get_or_create(contributor_id=applicant.id)
-    if applicant.role == UserRole.reader:
-        applicant.role = UserRole.contributor
-        await applicant.save()
 
+    kyc_url = f"{settings.FRONTEND_URL}/auth/contributor-kyc"
     if is_new_account:
         await _fire_email(email_client.send_application_approved_new_account(
             applicant.email,
@@ -218,8 +221,51 @@ async def approve_application(application: ContributorApplication, reviewer: Use
         await _fire_email(email_client.send_application_approved(
             applicant.email,
             applicant.display_name or applicant.email,
-            f"{settings.FRONTEND_URL}/console",
+            kyc_url,
         ))
+
+
+async def approve_kyc(kyc: ContributorKYC, reviewer: User) -> None:
+    """Verify KYC submission and upgrade contributor role to 'contributor'."""
+    from app.core.roles import UserRole
+    from app.config import settings
+    from app.core.email import email_client
+
+    kyc.status = KYCStatus.approved
+    kyc.reviewed_by_id = reviewer.id
+    kyc.reviewed_at = datetime.now(timezone.utc)
+    await kyc.save()
+
+    contributor = await kyc.contributor
+    if contributor.role == UserRole.reader:
+        contributor.role = UserRole.contributor
+        await contributor.save()
+
+    await _fire_email(email_client.send_kyc_approved(
+        contributor.email,
+        contributor.display_name or contributor.email,
+        f"{settings.FRONTEND_URL}/console",
+    ))
+
+
+async def reject_kyc(kyc: ContributorKYC, reviewer: User, note: Optional[str]) -> None:
+    """Reject KYC — contributor must resubmit."""
+    from app.config import settings
+    from app.core.email import email_client
+
+    kyc.status = KYCStatus.rejected
+    kyc.reviewed_by_id = reviewer.id
+    kyc.reviewed_at = datetime.now(timezone.utc)
+    kyc.reviewer_note = note
+    await kyc.save()
+
+    contributor = await kyc.contributor
+    await _fire_email(email_client.send_kyc_rejected(
+        contributor.email,
+        contributor.display_name or contributor.email,
+        f"{settings.FRONTEND_URL}/auth/contributor-kyc",
+        note,
+    ))
 
 
 async def reject_application(application: ContributorApplication, reviewer: User, note: Optional[str]) -> None:

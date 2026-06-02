@@ -54,8 +54,10 @@ from app.contributors.models import (
     ContributorApplication,
     ContributorBankAccount,
     ContributorEarning,
+    ContributorKYC,
     ContributorProfile,
     EarningStatus,
+    KYCStatus,
     PayoutRequest,
     PayoutRequestEarning,
     PayoutRequestStatus,
@@ -78,6 +80,11 @@ from app.contributors.schemas import (
     EarningsSummary,
     EligibilityBreakdown,
     EligibilityOverrideUpdate,
+    KYCAdminRead,
+    KYCRead,
+    KYCReview,
+    KYCSubmit,
+    OnboardingStatus,
     PayWorthyRubric,
     PayoutRequestAdminRead,
     PayoutRequestRead,
@@ -277,6 +284,166 @@ async def lookup_application(
     if not app:
         raise HTTPException(404, "No application found for this email address")
     return app
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONTRIBUTOR — ONBOARDING STATUS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/contributor/onboarding-status",
+    response_model=OnboardingStatus,
+    tags=["contributor"],
+)
+async def get_onboarding_status(
+    current_user: User = Depends(current_active_user),
+) -> OnboardingStatus:
+    """Returns whether this user has an approved application and their current KYC status.
+    Accessible to any logged-in user regardless of role."""
+    profile = await ContributorProfile.get_or_none(contributor_id=current_user.id)
+    if not profile:
+        return OnboardingStatus(application_approved=False, kyc_status=None)
+    kyc = await ContributorKYC.get_or_none(contributor_id=current_user.id)
+    return OnboardingStatus(
+        application_approved=True,
+        kyc_status=kyc.status.value if kyc else None,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONTRIBUTOR — KYC
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _require_approved_applicant(user: User = Depends(current_active_user)) -> User:
+    """Allows any logged-in user who has an approved application (ContributorProfile).
+    Does NOT require contributor role — this gate is for pre-KYC applicants."""
+    return user  # Profile check done inside handlers to avoid async in depends
+
+
+@router.post(
+    "/contributor/kyc/upload",
+    tags=["contributor"],
+)
+async def upload_kyc_document(
+    file: UploadFile = File(...),
+    _user: User = Depends(current_active_user),
+) -> dict:
+    """Upload a KYC identity document image or PDF. Returns a CDN URL."""
+    from app.storage import upload_to_r2, upload_document_to_r2, is_r2_configured
+
+    ALLOWED_KYC_TYPES = {
+        "image/jpeg", "image/png", "image/webp",
+        "application/pdf",
+    }
+    MAX_KYC_BYTES = 10 * 1024 * 1024  # 10 MB
+
+    if file.content_type not in ALLOWED_KYC_TYPES:
+        raise HTTPException(415, "Only JPEG, PNG, WebP, or PDF files are accepted")
+
+    data = await file.read()
+    if len(data) > MAX_KYC_BYTES:
+        raise HTTPException(413, "File must be under 10 MB")
+
+    if not is_r2_configured():
+        raise HTTPException(503, "File storage is not configured")
+
+    if file.content_type == "application/pdf":
+        url = await upload_document_to_r2(data, file.content_type, folder="kyc")
+    else:
+        url = await upload_to_r2(data, file.content_type, folder="kyc")
+    return {"url": url}
+
+
+@router.post(
+    "/contributor/kyc",
+    response_model=KYCRead,
+    status_code=201,
+    tags=["contributor"],
+)
+async def submit_kyc(
+    body: KYCSubmit,
+    current_user: User = Depends(current_active_user),
+) -> KYCRead:
+    """Submit identity verification. Requires an approved contributor application."""
+    profile = await ContributorProfile.get_or_none(contributor_id=current_user.id)
+    if not profile:
+        raise HTTPException(403, "No approved contributor application found for this account")
+
+    existing = await ContributorKYC.get_or_none(contributor_id=current_user.id)
+    if existing and existing.status == KYCStatus.approved:
+        raise HTTPException(409, "Identity already verified")
+    if existing and existing.status == KYCStatus.pending:
+        raise HTTPException(409, "A verification submission is already under review")
+
+    if existing:
+        # Resubmission after rejection — update in place
+        existing.full_name = body.full_name
+        existing.nin_or_bvn = body.nin_or_bvn
+        existing.document_type = body.document_type
+        existing.document_url = body.document_url
+        existing.status = KYCStatus.pending
+        existing.reviewer_note = None
+        existing.reviewed_at = None
+        existing.reviewed_by_id = None
+        await existing.save()
+        kyc = existing
+    else:
+        kyc = await ContributorKYC.create(
+            contributor_id=current_user.id,
+            full_name=body.full_name,
+            nin_or_bvn=body.nin_or_bvn,
+            document_type=body.document_type,
+            document_url=body.document_url,
+        )
+
+    # Notify admins
+    try:
+        from app.auth.models import User as UserModel
+        admins = await UserModel.filter(is_active=True).values_list("id", "role")
+        for admin_id, role in admins:
+            if role_has_at_least(role, UserRole.admin):
+                await _notify(
+                    recipient_id=admin_id,
+                    notif_type=NotificationType.kyc_submitted,
+                    title="New KYC submission",
+                    body=f"{current_user.display_name or current_user.email} has submitted identity verification documents.",
+                    link="/console/admin/kyc",
+                    sender_id=None,
+                )
+    except Exception:
+        pass
+
+    return KYCRead(
+        id=kyc.id,
+        status=kyc.status,
+        full_name=kyc.full_name,
+        document_type=kyc.document_type,
+        submitted_at=kyc.submitted_at,
+        reviewed_at=kyc.reviewed_at,
+        reviewer_note=kyc.reviewer_note,
+    )
+
+
+@router.get(
+    "/contributor/kyc",
+    response_model=KYCRead,
+    tags=["contributor"],
+)
+async def get_my_kyc(
+    current_user: User = Depends(current_active_user),
+) -> KYCRead:
+    kyc = await ContributorKYC.get_or_none(contributor_id=current_user.id)
+    if not kyc:
+        raise HTTPException(404, "No KYC submission found")
+    return KYCRead(
+        id=kyc.id,
+        status=kyc.status,
+        full_name=kyc.full_name,
+        document_type=kyc.document_type,
+        submitted_at=kyc.submitted_at,
+        reviewed_at=kyc.reviewed_at,
+        reviewer_note=kyc.reviewer_note,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -752,6 +919,113 @@ async def delete_application(
     deleted = await ContributorApplication.filter(id=application_id).delete()
     if not deleted:
         raise HTTPException(404, "Application not found")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN — KYC
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _kyc_to_admin_read(kyc: ContributorKYC) -> KYCAdminRead:
+    contributor = await kyc.contributor
+    return KYCAdminRead(
+        id=kyc.id,
+        contributor_id=contributor.id,
+        contributor_email=contributor.email,
+        contributor_name=contributor.display_name,
+        status=kyc.status,
+        full_name=kyc.full_name,
+        nin_or_bvn=kyc.nin_or_bvn,
+        document_type=kyc.document_type,
+        document_url=kyc.document_url,
+        submitted_at=kyc.submitted_at,
+        reviewed_at=kyc.reviewed_at,
+        reviewer_note=kyc.reviewer_note,
+    )
+
+
+@router.get(
+    "/admin/contributor/kyc",
+    response_model=list[KYCAdminRead],
+    tags=["admin"],
+)
+async def list_kyc_submissions(
+    status: Optional[KYCStatus] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    _admin: User = Depends(_require_admin),
+) -> list[KYCAdminRead]:
+    qs = ContributorKYC.all().order_by("-submitted_at")
+    if status:
+        qs = qs.filter(status=status)
+    submissions = await qs.offset(skip).limit(limit)
+    return [await _kyc_to_admin_read(k) for k in submissions]
+
+
+@router.post(
+    "/admin/contributor/kyc/{user_id}/approve",
+    response_model=KYCAdminRead,
+    tags=["admin"],
+)
+async def approve_kyc_submission(
+    user_id: uuid.UUID,
+    admin: User = Depends(_require_admin),
+) -> KYCAdminRead:
+    kyc = await ContributorKYC.get_or_none(contributor_id=user_id)
+    if not kyc:
+        raise HTTPException(404, "No KYC submission found for this user")
+    if kyc.status == KYCStatus.approved:
+        raise HTTPException(409, "Already approved")
+
+    await service.approve_kyc(kyc, admin)
+
+    try:
+        contributor = await kyc.contributor
+        await _notify(
+            recipient_id=contributor.id,
+            notif_type=NotificationType.kyc_approved,
+            title="Identity verified",
+            body="Your identity verification has been approved. You now have full access to the contributor console.",
+            link="/console",
+            sender_id=admin.id,
+        )
+    except Exception:
+        pass
+
+    return await _kyc_to_admin_read(kyc)
+
+
+@router.post(
+    "/admin/contributor/kyc/{user_id}/reject",
+    response_model=KYCAdminRead,
+    tags=["admin"],
+)
+async def reject_kyc_submission(
+    user_id: uuid.UUID,
+    body: KYCReview,
+    admin: User = Depends(_require_admin),
+) -> KYCAdminRead:
+    kyc = await ContributorKYC.get_or_none(contributor_id=user_id)
+    if not kyc:
+        raise HTTPException(404, "No KYC submission found for this user")
+    if kyc.status == KYCStatus.approved:
+        raise HTTPException(409, "Cannot reject an already approved KYC")
+
+    await service.reject_kyc(kyc, admin, body.note)
+
+    try:
+        contributor = await kyc.contributor
+        await _notify(
+            recipient_id=contributor.id,
+            notif_type=NotificationType.kyc_rejected,
+            title="Identity verification not approved",
+            body=f"Your verification documents could not be confirmed. Please resubmit.{' Note: ' + body.note if body.note else ''}",
+            link="/auth/contributor-kyc",
+            sender_id=admin.id,
+        )
+    except Exception:
+        pass
+
+    return await _kyc_to_admin_read(kyc)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
