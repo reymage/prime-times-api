@@ -314,12 +314,6 @@ async def get_onboarding_status(
 # CONTRIBUTOR — KYC
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _require_approved_applicant(user: User = Depends(current_active_user)) -> User:
-    """Allows any logged-in user who has an approved application (ContributorProfile).
-    Does NOT require contributor role — this gate is for pre-KYC applicants."""
-    return user  # Profile check done inside handlers to avoid async in depends
-
-
 @router.post(
     "/contributor/kyc/upload",
     tags=["contributor"],
@@ -815,8 +809,8 @@ async def review_application(
                     recipient_id=applicant.id,
                     notif_type=NotificationType.application_approved,
                     title="Your contributor application was approved",
-                    body="Welcome to the Prime Times Daily contributor programme. You can now submit stories.",
-                    link="/console",
+                    body="Your application has been approved. Complete your identity verification to unlock the contributor console.",
+                    link="/auth/contributor-kyc",
                     sender_id=admin.id,
                 )
             except Exception:
@@ -835,7 +829,7 @@ async def review_application(
                     notif_type=NotificationType.application_rejected,
                     title="Your contributor application was not approved",
                     body=f"Unfortunately your application was not approved at this time.{note_preview}",
-                    link="/console",
+                    link="/auth/contributor-status",
                     sender_id=admin.id,
                 )
             except Exception:
