@@ -66,6 +66,8 @@ class ConsoleStory(Model):
     geo_regions = fields.JSONField(default=list)
     # Featured flag — editors promote a story to the featured placement slot
     is_featured = fields.BooleanField(default=False)
+    # Editorial pick — editors curate this story for the Editorial Picks section
+    is_editorial_pick = fields.BooleanField(default=False)
     # When status=revision, points to the story this is a snapshot of
     revision_of = fields.ForeignKeyField(
         "models.ConsoleStory", related_name="revisions", null=True

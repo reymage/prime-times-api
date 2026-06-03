@@ -22,6 +22,7 @@ class Article(Model):
     is_internal = fields.BooleanField(default=False)
     is_featured = fields.BooleanField(default=False)
     is_premium = fields.BooleanField(default=False)
+    is_editorial_pick = fields.BooleanField(default=False)
     author_avatar = fields.CharField(max_length=500, null=True)
     view_count = fields.IntField(default=0)
     # FK back to the ConsoleStory that originated this article (null for external imports).

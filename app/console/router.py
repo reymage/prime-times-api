@@ -149,6 +149,8 @@ async def _sync_article(story: ConsoleStory) -> None:
             "image_url": img,
             "author": author_name,
             "is_featured": story.is_featured or False,
+            "is_video": story.story_type == "video",
+            "is_editorial_pick": story.is_editorial_pick or False,
             "is_premium": story.is_pay_worthy,
             "tags": story.tags or [],
             "issue_cluster_id": issue_cluster_id,
@@ -175,6 +177,8 @@ async def _sync_article(story: ConsoleStory) -> None:
             source_url=marker,
             is_internal=True,
             is_featured=story.is_featured or False,
+            is_video=(story.story_type == "video"),
+            is_editorial_pick=(story.is_editorial_pick or False),
             is_premium=story.is_pay_worthy,
             console_story_id=story.id,
             published_at=datetime.now(timezone.utc),
@@ -225,6 +229,7 @@ def _story_to_read(story: ConsoleStory) -> ConsoleStoryRead:
         editor_note=story.editor_note,
         geo_regions=story.geo_regions or [],
         is_featured=story.is_featured or False,
+        is_editorial_pick=story.is_editorial_pick or False,
         issue_cluster_id=str(story.issue_cluster_id) if story.issue_cluster_id else None,
         created_at=story.created_at.isoformat(),
         updated_at=story.updated_at.isoformat(),
@@ -313,6 +318,7 @@ async def create_story(
         editor_note=body.editor_note,
         geo_regions=body.geo_regions,
         is_featured=body.is_featured,
+        is_editorial_pick=body.is_editorial_pick,
         issue_cluster_id=body.issue_cluster_id or None,
     )
     await story.fetch_related("author")
@@ -353,9 +359,10 @@ async def update_story(
     }
     if body.editor_note is not None and is_editorial:
         update_data["editor_note"] = body.editor_note
-    # Only editors can set the featured flag
+    # Only editors can set featured / editorial pick flags
     if is_editorial:
         update_data["is_featured"] = body.is_featured
+        update_data["is_editorial_pick"] = body.is_editorial_pick
 
     # Stamp published_at on first publish.
     if update_data.get("status") == ConsoleStoryStatus.publish and not story.published_at:

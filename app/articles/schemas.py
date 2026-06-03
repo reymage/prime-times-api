@@ -49,6 +49,8 @@ class ArticleCard(BaseModel):
     is_internal: bool = False
     is_featured: bool = False
     is_premium: bool = False
+    is_editorial_pick: bool = False
+    view_count: int = 0
     author_avatar: str | None = None
     published_at: datetime
     time_ago: str = ""

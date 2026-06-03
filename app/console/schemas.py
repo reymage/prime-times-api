@@ -117,6 +117,7 @@ class ConsoleStoryCreate(BaseModel):
     editor_note: Optional[str] = None
     geo_regions: list[str] = Field(default_factory=list)
     is_featured: bool = False
+    is_editorial_pick: bool = False
     issue_cluster_id: Optional[str] = None
 
     @field_validator("title", mode="before")
@@ -202,6 +203,7 @@ class ConsoleStoryRead(BaseModel):
     editor_note: Optional[str]
     geo_regions: list[str]
     is_featured: bool
+    is_editorial_pick: bool
     issue_cluster_id: Optional[str]
     created_at: str
     updated_at: str

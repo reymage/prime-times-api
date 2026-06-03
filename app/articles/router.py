@@ -118,6 +118,42 @@ async def get_feed(
     return JSONResponse(content=data, headers=headers)
 
 
+@router.get("/feed/trending")
+async def get_trending(limit: int = Query(6, ge=1, le=20)):
+    """Articles sorted by view_count — powers the Making Waves section."""
+    cache_key = f"feed:trending:{limit}"
+    if (cached := await cache_get(cache_key)) is not None:
+        return JSONResponse(content=cached, headers=_PUBLIC_HEADERS)
+
+    articles = await Article.all().order_by("-view_count", "-published_at").limit(limit)
+    data = [ArticleCard.model_validate(a).model_dump(mode="json") for a in articles]
+    await cache_set(cache_key, data, ttl=120)
+    return JSONResponse(content=data, headers=_PUBLIC_HEADERS)
+
+
+@router.get("/feed/editorial-picks")
+async def get_editorial_picks(limit: int = Query(6, ge=1, le=20)):
+    """Articles marked as editorial picks by editors."""
+    cache_key = f"feed:editorial-picks:{limit}"
+    if (cached := await cache_get(cache_key)) is not None:
+        return JSONResponse(content=cached, headers=_PUBLIC_HEADERS)
+
+    picks = await Article.filter(is_editorial_pick=True).order_by("-published_at").limit(limit)
+    data = [ArticleCard.model_validate(a).model_dump(mode="json") for a in picks]
+    await cache_set(cache_key, data, ttl=60)
+    return JSONResponse(content=data, headers=_PUBLIC_HEADERS)
+
+
+@router.post("/articles/{slug}/view")
+async def record_article_view(slug: str):
+    """Increment view_count. Fire-and-forget from the frontend on article load."""
+    article = await Article.filter(slug=slug).only("id", "view_count").first()
+    if article:
+        article.view_count += 1
+        await article.save(update_fields=["view_count"])
+    return {"ok": True}
+
+
 @router.get("/articles/{slug}")
 async def get_article(slug: str):
     cache_key = f"article:{slug}"
