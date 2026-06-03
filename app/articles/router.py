@@ -52,8 +52,6 @@ async def get_feed(
         try:
             prefs, _ = await UserPreferences.get_or_create(user_id=current_user.id)
             active_topics = prefs.topics or []
-            if not city:
-                city = prefs.city or None
         except Exception:
             pass
     elif topics:
