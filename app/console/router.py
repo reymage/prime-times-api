@@ -131,6 +131,10 @@ async def _sync_article(story: ConsoleStory) -> None:
         author_name = story.author.display_name or story.author.email  # type: ignore[union-attr]
     except Exception:
         author_name = ""
+    try:
+        author_avatar = story.author.avatar_url if story.author else None  # type: ignore[union-attr]
+    except Exception:
+        author_avatar = None
 
     content_html = _sections_to_html(story.sections or [])
     excerpt = story.standfirst or ""
@@ -148,6 +152,7 @@ async def _sync_article(story: ConsoleStory) -> None:
             "category": category,
             "image_url": img,
             "author": author_name,
+            "author_avatar": author_avatar,
             "is_featured": story.is_featured or False,
             "is_video": story.story_type == "video",
             "is_editorial_pick": story.is_editorial_pick or False,
@@ -173,6 +178,7 @@ async def _sync_article(story: ConsoleStory) -> None:
             category=category,
             image_url=img,
             author=author_name,
+            author_avatar=author_avatar,
             source="Prime Times Daily",
             source_url=marker,
             is_internal=True,
@@ -542,6 +548,31 @@ async def delete_story(
     else:
         story.status = ConsoleStoryStatus.trash
         await story.save()
+
+
+@router.post("/refresh-author-info")
+async def refresh_author_info(
+    current_user: User = Depends(_require_writer),
+) -> dict:
+    """Bulk-update author name and avatar on all the current user's published articles.
+
+    Call this after changing your display name or avatar so the public article
+    feed reflects your current profile immediately.
+    """
+    from app.articles.models import Article as PublicArticle
+
+    author_name = current_user.display_name or current_user.email
+    avatar_url = current_user.avatar_url
+
+    story_ids = await ConsoleStory.filter(author_id=current_user.id).values_list("id", flat=True)
+    if not story_ids:
+        return {"updated": 0}
+
+    count = await PublicArticle.filter(console_story_id__in=story_ids).update(
+        author=author_name,
+        author_avatar=avatar_url,
+    )
+    return {"updated": count}
 
 
 # ── Issue cluster helpers ──────────────────────────────────────────────────────
