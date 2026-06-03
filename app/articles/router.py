@@ -24,10 +24,10 @@ async def get_hero(limit: int = Query(5, ge=1, le=10)):
     if (cached := await cache_get(cache_key)) is not None:
         return JSONResponse(content=cached, headers=_PUBLIC_HEADERS)
 
-    featured = await Article.filter(is_featured=True).order_by("-published_at").limit(limit)
+    featured = await Article.filter(is_featured=True).order_by("-published_at", "id").limit(limit)
     if len(featured) < limit:
         ids = [a.id for a in featured]
-        extra = await Article.exclude(id__in=ids).order_by("-published_at").limit(limit - len(featured))
+        extra = await Article.exclude(id__in=ids).order_by("-published_at", "id").limit(limit - len(featured))
         featured = list(featured) + list(extra)
 
     data = [ArticleCard.model_validate(a).model_dump(mode="json") for a in featured]
@@ -80,7 +80,7 @@ async def get_feed(
     offset = (page - 1) * limit
 
     if active_topics:
-        in_topic_qs = qs.filter(category__in=active_topics).order_by("-published_at")
+        in_topic_qs = qs.filter(category__in=active_topics).order_by("-published_at", "id")
         in_topic_total = await in_topic_qs.count()
 
         in_topic = list(await in_topic_qs.limit(limit).offset(offset))
@@ -91,7 +91,7 @@ async def get_feed(
             extra_offset = max(0, offset - in_topic_total)
             extra = list(
                 await qs.exclude(category__in=active_topics)
-                .order_by("-published_at")
+                .order_by("-published_at", "id")
                 .limit(limit - len(articles))
                 .offset(extra_offset)
             )
@@ -100,9 +100,9 @@ async def get_feed(
         if articles:
             personalized = True
         else:
-            articles = await qs.order_by("-published_at").limit(limit).offset(offset)
+            articles = await qs.order_by("-published_at", "id").limit(limit).offset(offset)
     else:
-        articles = await qs.order_by("-published_at").limit(limit).offset(offset)
+        articles = await qs.order_by("-published_at", "id").limit(limit).offset(offset)
 
     feed = FeedResponse(
         articles=[ArticleCard.model_validate(a) for a in articles],

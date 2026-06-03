@@ -124,7 +124,7 @@ async def get_issue_articles(
     total = await qs.count()
     pages = max(1, (total + limit - 1) // limit)
     offset = (page - 1) * limit
-    articles = await qs.order_by("-published_at").limit(limit).offset(offset)
+    articles = await qs.order_by("-published_at", "id").limit(limit).offset(offset)
 
     cards = []
     for a in articles:
