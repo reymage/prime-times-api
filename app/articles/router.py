@@ -69,32 +69,37 @@ async def get_feed(
     if category:
         qs = qs.filter(category__iexact=category)
     if city:
-        qs = qs.filter(tags__contains=city) | Article.all().filter(category__icontains=city)
         if category:
-            qs = Article.all().filter(category__iexact=category)
+            # Already scoped to the category; narrow further to city-tagged articles.
+            qs = qs.filter(tags__contains=[city])
+        else:
+            qs = qs.filter(Q(tags__contains=[city]) | Q(category__icontains=city))
 
     total = await qs.count()
     pages = max(1, (total + limit - 1) // limit)
     offset = (page - 1) * limit
 
     if active_topics:
-        in_topic = (
-            await qs.filter(category__in=active_topics)
-            .order_by("-published_at")
-            .limit(limit)
-            .offset(offset)
-        )
-        in_ids = [a.id for a in in_topic]
-        extra = await (
-            qs.exclude(id__in=in_ids)
-            .order_by("-published_at")
-            .limit(max(0, limit - len(in_topic)))
-        )
-        articles = list(in_topic) + list(extra)
+        in_topic_qs = qs.filter(category__in=active_topics).order_by("-published_at")
+        in_topic_total = await in_topic_qs.count()
+
+        in_topic = list(await in_topic_qs.limit(limit).offset(offset))
+
+        articles = in_topic
+        if len(articles) < limit:
+            # Once topic articles are exhausted, page into the remaining pool.
+            extra_offset = max(0, offset - in_topic_total)
+            extra = list(
+                await qs.exclude(category__in=active_topics)
+                .order_by("-published_at")
+                .limit(limit - len(articles))
+                .offset(extra_offset)
+            )
+            articles = articles + extra
+
         if articles:
             personalized = True
         else:
-            # No results from topics — fall back to unfiltered
             articles = await qs.order_by("-published_at").limit(limit).offset(offset)
     else:
         articles = await qs.order_by("-published_at").limit(limit).offset(offset)
