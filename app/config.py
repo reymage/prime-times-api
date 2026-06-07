@@ -79,6 +79,16 @@ class Settings(BaseSettings):
     # ── Prompts ───────────────────────────────────────────────────────────────
     PROMPTS_DIR: str = "prompts"              # relative to api/ working dir
 
+    # ── Database connection pool ──────────────────────────────────────────────
+    # The DB lives in a remote region (Supabase eu-west-1); the TLS+SCRAM
+    # handshake to open a fresh connection costs several seconds over that link.
+    # Keeping a warm pool (min_size > 0) and never dropping idle connections
+    # (max_inactive_lifetime = 0) means user requests reuse an open connection
+    # instead of paying that handshake. Tune MAX_SIZE to expected concurrency.
+    DB_POOL_MIN_SIZE: int = 2
+    DB_POOL_MAX_SIZE: int = 10
+    DB_POOL_MAX_INACTIVE_LIFETIME: float = 0.0  # 0 = never close idle connections
+
     # ── Cache ─────────────────────────────────────────────────────────────────
     REDIS_URL: str = ""                       # empty = use in-memory LRU
     CACHE_TTL_SECONDS: int = 3600

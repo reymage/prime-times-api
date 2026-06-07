@@ -14,6 +14,13 @@ def _build_connection(url: str) -> dict:
         # Disables prepared-statement caching so asyncpg works behind
         # PgBouncer (Supabase pooler uses transaction mode by default).
         "statement_cache_size": 0,
+        # Keep a warm pool so requests reuse open connections rather than
+        # repeating the multi-second TLS+SCRAM handshake to the remote DB.
+        # minsize/maxsize are consumed by Tortoise's asyncpg client;
+        # max_inactive_connection_lifetime is forwarded to asyncpg.create_pool.
+        "minsize": settings.DB_POOL_MIN_SIZE,
+        "maxsize": settings.DB_POOL_MAX_SIZE,
+        "max_inactive_connection_lifetime": settings.DB_POOL_MAX_INACTIVE_LIFETIME,
     }
     if p.hostname and ".supabase." in p.hostname:
         creds["ssl"] = "require"

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from tortoise.functions import Count
 
 from app.articles.models import Article
 from app.articles.schemas import ArticleCard, FeedResponse
@@ -38,18 +39,11 @@ def _effective_status(cluster: IssueCluster) -> str:
     return cluster.status.value
 
 
-async def _cluster_to_public(cluster: IssueCluster) -> PublicIssueRead:
-    article_count = await Article.filter(issue_cluster_id=cluster.id).count()
-
-    editor_name: str | None = None
-    if cluster.assigned_editor_id:
-        try:
-            from app.auth.models import User
-            editor = await User.get(id=cluster.assigned_editor_id)
-            editor_name = editor.display_name or editor.email
-        except Exception:
-            pass
-
+def _cluster_to_public(
+    cluster: IssueCluster,
+    article_count: int,
+    editor_name: str | None,
+) -> PublicIssueRead:
     return PublicIssueRead(
         id=str(cluster.id),
         name=cluster.name,
@@ -67,25 +61,75 @@ async def _cluster_to_public(cluster: IssueCluster) -> PublicIssueRead:
     )
 
 
-@router.get("")
-async def list_public_issues():
-    """List all active and breaking issue clusters, sorted breaking first."""
+async def _serialize_clusters(clusters: list[IssueCluster]) -> list[dict]:
+    """Serialize clusters to public dicts, batching the per-cluster lookups.
+
+    Replaces the old 2N+1 pattern (one COUNT + one User.get per cluster) with
+    three queries total: clusters, a grouped article-count, and a batched
+    editor lookup.
+    """
+    if not clusters:
+        return []
+
+    ids = [c.id for c in clusters]
+
+    # One grouped query for all article counts instead of one COUNT per cluster.
+    count_rows = (
+        await Article.filter(issue_cluster_id__in=ids)
+        .annotate(c=Count("id"))
+        .group_by("issue_cluster_id")
+        .values("issue_cluster_id", "c")
+    )
+    counts = {row["issue_cluster_id"]: row["c"] for row in count_rows}
+
+    # One batched query for all assigned editors instead of one User.get each.
+    editor_ids = {c.assigned_editor_id for c in clusters if c.assigned_editor_id}
+    editors: dict = {}
+    if editor_ids:
+        from app.auth.models import User
+
+        for u in await User.filter(id__in=list(editor_ids)).values(
+            "id", "display_name", "email"
+        ):
+            editors[u["id"]] = u["display_name"] or u["email"]
+
+    return [
+        _cluster_to_public(
+            c,
+            article_count=counts.get(c.id, 0),
+            editor_name=editors.get(c.assigned_editor_id),
+        ).model_dump(mode="json")
+        for c in clusters
+    ]
+
+
+async def list_public_issues_data() -> list[dict]:
+    """Cached list of active/breaking issue clusters (breaking first).
+
+    Exposed as a function so the batched home feed can reuse it without an
+    extra HTTP round-trip.
+    """
     cache_key = "pub:issues:list"
     if (cached := await cache_get(cache_key)) is not None:
-        return JSONResponse(content=cached, headers=_PUBLIC_HEADERS)
+        return cached
 
     clusters = await IssueCluster.filter(
         status__in=[IssueClusterStatus.active, IssueClusterStatus.breaking]
     ).order_by("status", "-updated_at")
 
-    data = [
-        (await _cluster_to_public(c)).model_dump(mode="json")
-        for c in sorted(
-            clusters,
-            key=lambda c: (0 if c.status == IssueClusterStatus.breaking else 1, -(c.breaking_order or 0)),
-        )
-    ]
+    ordered = sorted(
+        clusters,
+        key=lambda c: (0 if c.status == IssueClusterStatus.breaking else 1, -(c.breaking_order or 0)),
+    )
+    data = await _serialize_clusters(ordered)
     await cache_set(cache_key, data, ttl=60)
+    return data
+
+
+@router.get("")
+async def list_public_issues():
+    """List all active and breaking issue clusters, sorted breaking first."""
+    data = await list_public_issues_data()
     return JSONResponse(content=data, headers=_PUBLIC_HEADERS)
 
 
@@ -100,7 +144,8 @@ async def get_public_issue(slug: str):
     if not cluster:
         raise HTTPException(status_code=404, detail="Issue not found")
 
-    data = (await _cluster_to_public(cluster)).model_dump(mode="json")
+    serialized = await _serialize_clusters([cluster])
+    data = serialized[0]
     await cache_set(cache_key, data, ttl=60)
     return JSONResponse(content=data, headers=_PUBLIC_HEADERS)
 

@@ -31,6 +31,21 @@ limiter = Limiter(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.scheduler import start_scheduler, stop_scheduler
+
+    # Warm the DB pool before serving traffic. Opening connections to the
+    # remote DB costs several seconds (TLS+SCRAM over a high-latency link);
+    # doing it here means the first user request reuses a live connection
+    # instead of paying that handshake.
+    try:
+        from tortoise import Tortoise
+
+        conn = Tortoise.get_connection("default")
+        await conn.execute_query("SELECT 1")
+    except Exception:
+        # Don't block startup if the warm-up query fails — the pool will
+        # initialise lazily on first use.
+        pass
+
     start_scheduler()
     try:
         yield
