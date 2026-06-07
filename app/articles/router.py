@@ -1,11 +1,12 @@
 import asyncio
+import hashlib
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from tortoise.expressions import Q
 
-from app.articles.models import Article, SavedArticle
-from app.articles.schemas import ArticleCard, ArticleDetail, FeedResponse, FeedbackIn
+from app.articles.models import Article, SavedArticle, ArticleView, ArticleFeedback
+from app.articles.schemas import ArticleCard, ArticleDetail, FeedResponse, FeedbackIn, ViewIn
 from app.auth.dependencies import fastapi_users, current_active_user
 from app.auth.models import User, UserPreferences
 from app.ai.cache import cache_get, cache_set
@@ -230,14 +231,33 @@ async def get_editorial_picks(limit: int = Query(6, ge=1, le=20)):
     return JSONResponse(content=await _editorial_data(limit), headers=_PUBLIC_HEADERS)
 
 
+def _resolve_device_id(explicit: str | None, request: Request) -> str:
+    """A stable per-device id. Prefer the client-supplied id; otherwise derive
+    one from IP + User-Agent so anonymous readers are still de-duplicated."""
+    if explicit:
+        return explicit[:64]
+    fwd = request.headers.get("x-forwarded-for", "")
+    ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")
+    ua = request.headers.get("user-agent", "")
+    return hashlib.sha256(f"{ip}|{ua}".encode()).hexdigest()[:32]
+
+
 @router.post("/articles/{slug}/view")
-async def record_article_view(slug: str):
-    """Increment view_count. Fire-and-forget from the frontend on article load."""
-    article = await Article.filter(slug=slug).only("id", "view_count").first()
-    if article:
-        article.view_count += 1
+async def record_article_view(slug: str, request: Request, body: ViewIn | None = None):
+    """Record a read. Bumps the raw counter every time, but only increments the
+    unique-reader counter the first time a given device views this article."""
+    article = await Article.filter(slug=slug).only("id", "view_count", "unique_view_count").first()
+    if not article:
+        return {"ok": True}
+    device_id = _resolve_device_id(body.device_id if body else None, request)
+    article.view_count += 1
+    _, created = await ArticleView.get_or_create(article_id=article.id, device_id=device_id)
+    if created:
+        article.unique_view_count += 1
+        await article.save(update_fields=["view_count", "unique_view_count"])
+    else:
         await article.save(update_fields=["view_count"])
-    return {"ok": True}
+    return {"ok": True, "unique_views": article.unique_view_count}
 
 
 @router.post("/articles/{slug}/share")
@@ -253,17 +273,36 @@ async def record_article_share(slug: str):
 
 
 @router.post("/articles/{slug}/feedback")
-async def record_article_feedback(slug: str, body: FeedbackIn):
-    """Record reader feedback — 'Did this story help you understand the issue?'"""
+async def record_article_feedback(slug: str, request: Request, body: FeedbackIn):
+    """Record reader feedback — 'Did this story help you understand the issue?'.
+    One vote per device; a device may switch yes<->no but only counts once."""
     article = await Article.filter(slug=slug).only("id", "helpful_yes", "helpful_no").first()
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
-    if body.helpful:
-        article.helpful_yes += 1
-        await article.save(update_fields=["helpful_yes"])
-    else:
-        article.helpful_no += 1
-        await article.save(update_fields=["helpful_no"])
+
+    device_id = _resolve_device_id(body.device_id, request)
+    fb = await ArticleFeedback.get_or_none(article_id=article.id, device_id=device_id)
+
+    if fb is None:
+        await ArticleFeedback.create(article_id=article.id, device_id=device_id, helpful=body.helpful)
+        if body.helpful:
+            article.helpful_yes += 1
+        else:
+            article.helpful_no += 1
+        await article.save(update_fields=["helpful_yes", "helpful_no"])
+    elif fb.helpful != body.helpful:
+        # Switch the vote — move the count from one bucket to the other.
+        if body.helpful:
+            article.helpful_yes += 1
+            article.helpful_no = max(0, article.helpful_no - 1)
+        else:
+            article.helpful_no += 1
+            article.helpful_yes = max(0, article.helpful_yes - 1)
+        fb.helpful = body.helpful
+        await fb.save(update_fields=["helpful", "updated_at"])
+        await article.save(update_fields=["helpful_yes", "helpful_no"])
+    # same vote repeated → no-op
+
     return {"helpful_yes": article.helpful_yes, "helpful_no": article.helpful_no}
 
 

@@ -24,11 +24,15 @@ class Article(Model):
     is_premium = fields.BooleanField(default=False)
     is_editorial_pick = fields.BooleanField(default=False)
     author_avatar = fields.CharField(max_length=500, null=True)
+    # Raw read count (every load) — powers trending/popularity.
     view_count = fields.IntField(default=0)
+    # Unique readers (distinct device ids) — "how many people viewed this".
+    unique_view_count = fields.IntField(default=0)
     # Number of successful shares (native share completed, link copied, or a
     # share-platform window opened).
     share_count = fields.IntField(default=0)
     # Reader feedback — "Did this story help you understand the issue?"
+    # Unique per device: one vote per reader (switchable yes<->no).
     helpful_yes = fields.IntField(default=0)
     helpful_no = fields.IntField(default=0)
     # FK back to the ConsoleStory that originated this article (null for external imports).
@@ -58,3 +62,36 @@ class SavedArticle(Model):
     class Meta:
         table = "saved_articles"
         unique_together = (("user_id", "article_id"),)
+
+
+class ArticleView(Model):
+    """One row per (article, device) — used to dedupe unique views.
+
+    device_id is a client-generated id (no login required); it falls back to a
+    hash of IP+User-Agent when the client doesn't supply one.
+    """
+    id = fields.IntField(pk=True)
+    article_id = fields.UUIDField(index=True)
+    device_id = fields.CharField(max_length=64)
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "article_views"
+        unique_together = (("article_id", "device_id"),)
+
+
+class ArticleFeedback(Model):
+    """One vote per (article, device) — 'Did this story help you understand?'.
+
+    Switchable: a device can change yes<->no, but only ever counts once.
+    """
+    id = fields.IntField(pk=True)
+    article_id = fields.UUIDField(index=True)
+    device_id = fields.CharField(max_length=64)
+    helpful = fields.BooleanField()
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "article_feedback"
+        unique_together = (("article_id", "device_id"),)

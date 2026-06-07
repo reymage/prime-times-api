@@ -805,7 +805,8 @@ async def get_portfolio(current_user: User = Depends(current_active_user)):
             "story_type": story_type_by_id.get(a.console_story_id, "article"),
             "image": a.image_url,
             "published_at": a.published_at.isoformat(),
-            "views": a.view_count,
+            # Unique readers ("how many people viewed"), not raw load count.
+            "views": a.unique_view_count,
             "shares": a.share_count,
             "helpful_yes": a.helpful_yes,
             "helpful_no": a.helpful_no,

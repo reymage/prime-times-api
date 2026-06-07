@@ -80,6 +80,13 @@ class FeedResponse(BaseModel):
     personalized: bool = False
 
 
+class ViewIn(BaseModel):
+    # Client-generated device id (no login required); optional — falls back to
+    # a hash of IP + User-Agent when absent.
+    device_id: str | None = None
+
+
 class FeedbackIn(BaseModel):
     # "Did this story help you understand the issue?" — true = yes, false = no.
     helpful: bool
+    device_id: str | None = None
