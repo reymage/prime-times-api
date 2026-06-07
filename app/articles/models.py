@@ -25,6 +25,12 @@ class Article(Model):
     is_editorial_pick = fields.BooleanField(default=False)
     author_avatar = fields.CharField(max_length=500, null=True)
     view_count = fields.IntField(default=0)
+    # Number of successful shares (native share completed, link copied, or a
+    # share-platform window opened).
+    share_count = fields.IntField(default=0)
+    # Reader feedback — "Did this story help you understand the issue?"
+    helpful_yes = fields.IntField(default=0)
+    helpful_no = fields.IntField(default=0)
     # FK back to the ConsoleStory that originated this article (null for external imports).
     console_story_id = fields.UUIDField(null=True, index=True)
     published_at = fields.DatetimeField()

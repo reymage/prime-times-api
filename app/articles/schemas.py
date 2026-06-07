@@ -78,3 +78,8 @@ class FeedResponse(BaseModel):
     page: int
     pages: int
     personalized: bool = False
+
+
+class FeedbackIn(BaseModel):
+    # "Did this story help you understand the issue?" — true = yes, false = no.
+    helpful: bool

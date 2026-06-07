@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from tortoise.expressions import Q
 
 from app.articles.models import Article, SavedArticle
-from app.articles.schemas import ArticleCard, ArticleDetail, FeedResponse
+from app.articles.schemas import ArticleCard, ArticleDetail, FeedResponse, FeedbackIn
 from app.auth.dependencies import fastapi_users, current_active_user
 from app.auth.models import User, UserPreferences
 from app.ai.cache import cache_get, cache_set
@@ -238,6 +238,33 @@ async def record_article_view(slug: str):
         article.view_count += 1
         await article.save(update_fields=["view_count"])
     return {"ok": True}
+
+
+@router.post("/articles/{slug}/share")
+async def record_article_share(slug: str):
+    """Increment share_count. Fired from the frontend on a successful share
+    (native share completed, link copied, or a share-platform window opened)."""
+    article = await Article.filter(slug=slug).only("id", "share_count").first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    article.share_count += 1
+    await article.save(update_fields=["share_count"])
+    return {"shares": article.share_count}
+
+
+@router.post("/articles/{slug}/feedback")
+async def record_article_feedback(slug: str, body: FeedbackIn):
+    """Record reader feedback — 'Did this story help you understand the issue?'"""
+    article = await Article.filter(slug=slug).only("id", "helpful_yes", "helpful_no").first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    if body.helpful:
+        article.helpful_yes += 1
+        await article.save(update_fields=["helpful_yes"])
+    else:
+        article.helpful_no += 1
+        await article.save(update_fields=["helpful_no"])
+    return {"helpful_yes": article.helpful_yes, "helpful_no": article.helpful_no}
 
 
 @router.get("/articles/{slug}")

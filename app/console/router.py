@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.auth.dependencies import current_active_user
 from app.auth.models import User
+from app.articles.models import Article
 from app.console.models import ConsoleStory, ConsoleStoryStatus, IssueCluster, IssueClusterStatus
 from app.nav.models import NavArea, NavItemType, NavMenu
 from app.console.schemas import (
@@ -770,3 +771,44 @@ async def list_issue_stories(
         issue_cluster_id=issue_id
     ).exclude(status=ConsoleStoryStatus.trash).prefetch_related("author").order_by("-updated_at")
     return [_story_to_read(s) for s in stories]
+
+
+@router.get("/portfolio")
+async def get_portfolio(current_user: User = Depends(current_active_user)):
+    """The signed-in writer's published work with engagement metrics.
+
+    Returns every published Article that originated from one of the writer's
+    ConsoleStories, including views, successful shares, and helpful yes/no
+    feedback. The frontend handles search / time-window / sort / category.
+    """
+    story_type_by_id = {
+        s["id"]: s["story_type"]
+        for s in await ConsoleStory.filter(
+            author_id=current_user.id, status=ConsoleStoryStatus.publish
+        ).values("id", "story_type")
+    }
+    if not story_type_by_id:
+        return []
+
+    articles = (
+        await Article.filter(console_story_id__in=list(story_type_by_id.keys()))
+        .order_by("-published_at")
+    )
+
+    return [
+        {
+            "id": str(a.id),
+            "slug": a.slug,
+            "title": a.title,
+            "excerpt": a.excerpt,
+            "category": a.category,
+            "story_type": story_type_by_id.get(a.console_story_id, "article"),
+            "image": a.image_url,
+            "published_at": a.published_at.isoformat(),
+            "views": a.view_count,
+            "shares": a.share_count,
+            "helpful_yes": a.helpful_yes,
+            "helpful_no": a.helpful_no,
+        }
+        for a in articles
+    ]
