@@ -162,6 +162,7 @@ async def _sync_article(story: ConsoleStory) -> None:
             "issue_cluster_id": issue_cluster_id,
             "console_story_id": story.id,
         }).save()
+        article_slug = existing.slug
         logger.info("Synced article update for story %s", story.id)
     else:
         suffix = str(story.id).replace("-", "")[:8]
@@ -180,7 +181,7 @@ async def _sync_article(story: ConsoleStory) -> None:
             image_url=img,
             author=author_name,
             author_avatar=author_avatar,
-            source="Prime Times Daily",
+            source="Wire24",
             source_url=marker,
             is_internal=True,
             is_featured=story.is_featured or False,
@@ -192,10 +193,16 @@ async def _sync_article(story: ConsoleStory) -> None:
             tags=story.tags or [],
             issue_cluster_id=issue_cluster_id,
         )
+        article_slug = slug
         logger.info("Created public article for story %s (slug=%s)", story.id, slug)
 
     # Bust the feed cache so the new/updated article appears immediately
     await cache_invalidate_prefix("feed:")
+
+    # Purge Cloudflare's edge cache for the public surfaces this article appears
+    # on, so a publish/edit shows up immediately instead of waiting for the TTL.
+    from app.core.cache_purge import purge_article
+    await purge_article(article_slug, category)
 
 router = APIRouter(prefix="/api/console", tags=["console"])
 

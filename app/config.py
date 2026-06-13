@@ -55,6 +55,16 @@ class Settings(BaseSettings):
     # ── Frontend ──────────────────────────────────────────────────────────────
     FRONTEND_URL: str = "http://localhost:8080"
 
+    # ── Cloudflare edge cache (purge-on-publish) ───────────────────────────────
+    # Set CLOUDFLARE_ZONE_ID + CLOUDFLARE_API_TOKEN (the token needs the
+    # "Cache Purge" permission) to purge the public site's edge cache the moment
+    # a story is published or edited — so breaking news appears instantly instead
+    # of waiting for the cache TTL. PUBLIC_SITE_URL is the cached origin to purge
+    # (falls back to FRONTEND_URL). Leave the IDs blank to disable purging.
+    CLOUDFLARE_ZONE_ID: str = ""
+    CLOUDFLARE_API_TOKEN: str = ""
+    PUBLIC_SITE_URL: str = ""
+
     # ── Email ─────────────────────────────────────────────────────────────────
     # Set EMAIL_PROVIDER=brevo and BREVO_API_KEY=<key> in .env to send real emails.
     # Default "console" logs emails to stdout (safe for development).
