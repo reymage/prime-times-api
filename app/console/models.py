@@ -49,7 +49,21 @@ class IssueCluster(Model):
 
 class ConsoleStory(Model):
     id = fields.UUIDField(pk=True, default=uuid.uuid4)
+    # The record creator. The public byline, however, is the *byline author* —
+    # `assigned_to` if an editor commissioned the story to a writer, otherwise
+    # `author` (see _byline_user_id in the console router).
     author = fields.ForeignKeyField("models.User", related_name="console_stories")
+    # Set when an editor initiates a story and assigns it to a writer to write.
+    # The assignee becomes the byline author and can see/edit the story.
+    assigned_to = fields.ForeignKeyField(
+        "models.User", related_name="assigned_stories", null=True, on_delete=fields.SET_NULL
+    )
+    # Internal audit only (never shown to readers): who last edited the content
+    # and when. Lets the desk see editorial involvement without changing byline.
+    last_edited_by = fields.ForeignKeyField(
+        "models.User", related_name="edited_stories", null=True, on_delete=fields.SET_NULL
+    )
+    last_edited_at = fields.DatetimeField(null=True)
     title = fields.CharField(max_length=500, default="")
     standfirst = fields.TextField(default="")
     # JSON array of section objects: [{id, type, heading, content, ...}]

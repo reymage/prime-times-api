@@ -31,11 +31,33 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
     async def on_after_register(self, user: User, request: Request | None = None) -> None:
         logger.info("User registered: %s", user.email)
+        # Give every user a stable author slug up front.
+        try:
+            from app.auth.slugs import ensure_user_slug
+            await ensure_user_slug(user)
+        except Exception:
+            logger.exception("Failed to set author slug for %s", user.email)
         # Immediately trigger verification so the welcome+verify email goes out
         try:
             await self.request_verify(user, request)
         except Exception:
             logger.exception("Failed to send verification email to %s", user.email)
+
+    async def on_after_update(
+        self,
+        user: User,
+        update_dict: dict,
+        request: Request | None = None,
+    ) -> None:
+        # Keep published bylines fresh: when a writer changes their name or
+        # avatar, propagate it to their cached article bylines automatically.
+        # The slug is a stable handle and intentionally never changes.
+        if "display_name" in update_dict or "avatar_url" in update_dict:
+            try:
+                from app.auth.slugs import refresh_author_cache
+                await refresh_author_cache(user)
+            except Exception:
+                logger.exception("Failed to refresh bylines for %s", user.email)
 
     async def on_after_request_verify(
         self, user: User, token: str, request: Request | None = None

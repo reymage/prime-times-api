@@ -417,6 +417,133 @@ async def test_comments_pagination(db):
     assert page1[0].body.endswith("0") and page2[0].body.endswith("2")
 
 
+# ── Feature #2: authorship / byline ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_assigned_story_byline_attributes_to_writer(db):
+    from app.articles.models import Article
+
+    editor = await _make_user(UserRole.editor, "Editor")
+    writer = await _make_user(UserRole.reporter, "Bukola")
+    # Editor initiates the story and assigns it to the writer.
+    story = await ConsoleStory.create(
+        author_id=editor.id,
+        assigned_to_id=writer.id,
+        title="Budget Padding",
+        standfirst="An investigation.",
+        sections=[{"id": "s1", "type": "text", "content": "body"}],
+        status=ConsoleStoryStatus.pending_review,
+    )
+    await story.fetch_related("author")
+
+    await console.update_story_status(
+        story.id,
+        ConsoleStoryStatusUpdate(status=ConsoleStoryStatus.publish, expected_version=1),
+        current_user=editor,
+    )
+
+    art = await Article.filter(console_story_id=story.id).first()
+    assert art is not None
+    assert str(art.author_id) == str(writer.id)   # byline = the assigned writer
+    assert art.author == "Bukola"
+    assert art.author_slug                          # a stable slug was generated
+    # The writer (byline), not the editor, got the published notification.
+    assert await Notification.filter(
+        recipient_id=writer.id, notif_type=NotificationType.story_published
+    ).exists()
+
+
+@pytest.mark.asyncio
+async def test_editor_edit_of_assigned_story_records_last_edited_by(db):
+    editor = await _make_user(UserRole.editor, "Editor")
+    writer = await _make_user(UserRole.reporter, "Bukola")
+    story = await ConsoleStory.create(
+        author_id=editor.id,
+        assigned_to_id=writer.id,
+        title="T",
+        standfirst="s",
+        sections=[{"id": "s1", "type": "text", "content": "orig"}],
+        status=ConsoleStoryStatus.pending_review,
+    )
+    await story.fetch_related("author")
+
+    body = _update_body(
+        story,
+        expected_version=1,
+        sections=[SectionData(id="s1", type="text", content="editor rewrite")],
+    )
+    await console.update_story(story.id, body, current_user=editor)
+
+    refreshed = await ConsoleStory.get(id=story.id)
+    assert str(refreshed.last_edited_by_id) == str(editor.id)
+    assert refreshed.last_edited_at is not None
+    # The assigned writer (byline), not the editor, is notified of the edit.
+    assert await Notification.filter(
+        recipient_id=writer.id, notif_type=NotificationType.story_edited
+    ).exists()
+
+
+@pytest.mark.asyncio
+async def test_editor_assigns_story_to_writer(db):
+    from app.console.schemas import StoryAssignUpdate
+
+    editor = await _make_user(UserRole.editor, "Editor")
+    writer = await _make_user(UserRole.reporter, "Bukola")
+    # Editor initiates a story (they are the record author).
+    story = await _make_story(editor, status=ConsoleStoryStatus.draft)
+
+    result = await console.assign_story(
+        story.id, StoryAssignUpdate(assignee_id=str(writer.id)), current_user=editor
+    )
+    assert result.assigned_to is not None
+    assert result.assigned_to.id == str(writer.id)
+
+    refreshed = await ConsoleStory.get(id=story.id)
+    assert str(refreshed.assigned_to_id) == str(writer.id)
+    # The assigned writer is notified.
+    assert await Notification.filter(
+        recipient_id=writer.id, notif_type=NotificationType.story_assigned
+    ).exists()
+
+
+@pytest.mark.asyncio
+async def test_assignee_can_access_assigned_story(db):
+    from app.console.schemas import StoryAssignUpdate
+
+    editor = await _make_user(UserRole.editor, "Editor")
+    writer = await _make_user(UserRole.reporter, "Bukola")
+    story = await _make_story(editor, status=ConsoleStoryStatus.draft)
+
+    # Before assignment the writer can't see it.
+    with pytest.raises(HTTPException) as exc:
+        await console.get_story(story.id, current_user=writer)
+    assert exc.value.status_code == 403
+
+    await console.assign_story(
+        story.id, StoryAssignUpdate(assignee_id=str(writer.id)), current_user=editor
+    )
+    # After assignment they can.
+    got = await console.get_story(story.id, current_user=writer)
+    assert got.assigned_to.id == str(writer.id)
+
+    listed = await console.list_stories(status=None, skip=0, limit=50, current_user=writer)
+    assert any(s.id == str(story.id) for s in listed)
+
+
+@pytest.mark.asyncio
+async def test_non_editor_cannot_assign(db):
+    from app.console.schemas import StoryAssignUpdate
+
+    writer = await _make_user(UserRole.reporter, "Bukola")
+    other = await _make_user(UserRole.reporter, "Other")
+    story = await _make_story(writer, status=ConsoleStoryStatus.draft)
+    with pytest.raises(HTTPException) as exc:
+        await console.assign_story(
+            story.id, StoryAssignUpdate(assignee_id=str(other.id)), current_user=writer
+        )
+    assert exc.value.status_code == 403
+
+
 @pytest.mark.asyncio
 async def test_outsider_cannot_read_thread(db):
     writer = await _make_user(UserRole.reporter, "Bukola")

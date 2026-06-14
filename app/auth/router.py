@@ -120,6 +120,12 @@ async def upload_my_avatar(
     url = await upload_to_r2(data, file.content_type, folder="avatars")
     current_user.avatar_url = url
     await current_user.save(update_fields=["avatar_url"])
+    # Keep published bylines' avatars fresh.
+    try:
+        from app.auth.slugs import refresh_author_cache
+        await refresh_author_cache(current_user)
+    except Exception:
+        pass
     return {"avatar_url": url}
 
 

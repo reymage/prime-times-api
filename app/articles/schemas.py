@@ -52,6 +52,9 @@ class ArticleCard(BaseModel):
     is_editorial_pick: bool = False
     view_count: int = 0
     author_avatar: str | None = None
+    # Stable author handle for the byline link (/author/<slug>). Null for
+    # external imports with no internal user.
+    author_slug: str | None = None
     published_at: datetime
     time_ago: str = ""
     tags: list[str] = []

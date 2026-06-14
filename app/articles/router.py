@@ -488,11 +488,47 @@ async def get_author_profile(
 
     data = {
         "name": author_name,
+        "slug": user.slug if user else None,
         "avatar": (user.avatar_url if user and user.avatar_url else None) or avatar,
         "bio": user.bio if user else None,
         "linkedin_url": user.linkedin_url if user else None,
         "twitter_url": user.twitter_url if user else None,
         "public_email": user.public_email if user else None,
+        "article_count": total,
+        "articles": [ArticleCard.model_validate(a).model_dump(mode="json") for a in articles],
+        "page": page,
+        "pages": pages,
+    }
+    return JSONResponse(content=data, headers=_PUBLIC_HEADERS)
+
+
+@router.get("/authors/by-slug/{slug}")
+async def get_author_profile_by_slug(
+    slug: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(12, ge=1, le=50),
+):
+    """Public author profile resolved by stable slug — preferred over the
+    name-based lookup, which is fragile across renames and name collisions."""
+    user = await User.get_or_none(slug=slug)
+    if not user:
+        raise HTTPException(status_code=404, detail="Author not found")
+
+    qs = Article.filter(author_id=user.id)
+    total = await qs.count()
+    pages = max(1, (total + limit - 1) // limit)
+    offset = (page - 1) * limit
+    articles = await qs.order_by("-published_at").limit(limit).offset(offset)
+    avatar = user.avatar_url or next((a.author_avatar for a in articles if a.author_avatar), None)
+
+    data = {
+        "name": user.display_name or slug,
+        "slug": user.slug,
+        "avatar": avatar,
+        "bio": user.bio,
+        "linkedin_url": user.linkedin_url,
+        "twitter_url": user.twitter_url,
+        "public_email": user.public_email,
         "article_count": total,
         "articles": [ArticleCard.model_validate(a).model_dump(mode="json") for a in articles],
         "page": page,

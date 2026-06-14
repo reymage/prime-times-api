@@ -299,9 +299,12 @@ async def on_story_published(story: ConsoleStory) -> None:
     """
     Call this whenever a story transitions to status=publish.
     Sets first_published_story_date on the contributor's profile if not already set.
+    Credits the byline writer — the assignee when an editor commissioned the
+    story, otherwise the record author.
     """
+    byline_id = story.assigned_to_id or story.author_id
     try:
-        profile = await ContributorProfile.get(contributor_id=story.author_id)
+        profile = await ContributorProfile.get(contributor_id=byline_id)
     except DoesNotExist:
         return
     if profile.first_published_story_date is None:

@@ -15,6 +15,10 @@ class User(Model):
     is_verified = fields.BooleanField(default=False)
     role = fields.CharEnumField(UserRole, default=UserRole.reader, max_length=20)
     display_name = fields.CharField(max_length=100, null=True)
+    # Stable public handle for author-page URLs (/author/<slug>). Decoupled from
+    # display_name so a rename never breaks existing links. Generated once and
+    # then fixed; see app.auth.slugs.ensure_user_slug.
+    slug = fields.CharField(max_length=120, null=True, unique=True, index=True)
     avatar_url = fields.CharField(max_length=500, null=True)
     phone = fields.CharField(max_length=20, null=True)
     state = fields.CharField(max_length=100, null=True)

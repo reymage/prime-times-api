@@ -18,6 +18,8 @@ class NotificationType(str, enum.Enum):
     story_comment = "story_comment"
     # An editor edited the writer's story content directly.
     story_edited = "story_edited"
+    # An editor assigned a story to a writer to write.
+    story_assigned = "story_assigned"
     # Contributor application
     application_submitted = "application_submitted"
     application_under_review = "application_under_review"

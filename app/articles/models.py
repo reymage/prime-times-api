@@ -14,6 +14,12 @@ class Article(Model):
     category = fields.CharField(max_length=100, index=True)
     image_url = fields.CharField(max_length=500, default="")
     author = fields.CharField(max_length=200, default="")
+    # Stable link to the byline author (the writer). The `author`/`author_avatar`
+    # strings above are a denormalized display cache kept in sync from this user;
+    # `author_slug` powers the author-page link without a join. Null for external
+    # imports that have no internal user.
+    author_id = fields.UUIDField(null=True, index=True)
+    author_slug = fields.CharField(max_length=120, null=True, index=True)
     source = fields.CharField(max_length=200, default="")
     source_icon = fields.CharField(max_length=500, null=True)
     source_url = fields.CharField(max_length=500, null=True)

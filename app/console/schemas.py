@@ -209,10 +209,20 @@ class ConsoleStoryRead(BaseModel):
     is_editorial_pick: bool
     issue_cluster_id: Optional[str]
     version: int
+    # The writer an editor assigned this story to (byline owner when set).
+    assigned_to: Optional[AuthorRead] = None
+    # Internal audit (console-only): who last edited the content, and when.
+    last_edited_by: Optional[AuthorRead] = None
+    last_edited_at: Optional[str] = None
     created_at: str
     updated_at: str
 
     model_config = {"from_attributes": True}
+
+
+class StoryAssignUpdate(BaseModel):
+    # The writer to assign (must be contributor or above). Null/empty unassigns.
+    assignee_id: Optional[str] = None
 
 
 # ── Story comment (editorial thread) schemas ──────────────────────────────────

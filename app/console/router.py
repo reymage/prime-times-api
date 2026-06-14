@@ -36,6 +36,7 @@ from app.console.schemas import (
     IssueClusterRead,
     IssueClusterUpdate,
     SectionData,
+    StoryAssignUpdate,
     StoryCommentCreate,
     StoryCommentAuthorRead,
     StoryCommentRead,
@@ -48,6 +49,15 @@ from app.notifications.service import create_notification
 logger = logging.getLogger(__name__)
 
 
+def _byline_user_id(story: "ConsoleStory") -> uuid.UUID | None:
+    """The user the story is attributed to (the writer).
+
+    An editor can initiate a story and assign it to a writer; in that case the
+    assignee owns the byline. Otherwise it's the record creator (`author`).
+    """
+    return story.assigned_to_id or story.author_id
+
+
 async def _notify_story(
     story: "ConsoleStory",
     notif_type: NotificationType,
@@ -55,12 +65,12 @@ async def _notify_story(
     body: str,
     sender_id: uuid.UUID | None = None,
 ) -> None:
-    """Fire a notification to the story author; swallow all errors."""
+    """Fire a notification to the story's byline writer; swallow all errors."""
     try:
-        author_id = story.author_id
-        if author_id and str(author_id) != str(sender_id):
+        recipient_id = _byline_user_id(story)
+        if recipient_id and str(recipient_id) != str(sender_id):
             await create_notification(
-                recipient_id=author_id,
+                recipient_id=recipient_id,
                 notif_type=notif_type,
                 title=title,
                 body=body,
@@ -219,15 +229,28 @@ async def _sync_article(story: ConsoleStory) -> None:
     from app.articles.models import Article
     from app.ai.cache import cache_invalidate_prefix
 
+    from app.auth.models import User
+    from app.auth.slugs import ensure_user_slug
+
     marker = f"ptd:console:{story.id}"
-    try:
-        author_name = story.author.display_name or story.author.email  # type: ignore[union-attr]
-    except Exception:
-        author_name = ""
-    try:
-        author_avatar = story.author.avatar_url if story.author else None  # type: ignore[union-attr]
-    except Exception:
-        author_avatar = None
+    # Attribute the article to the byline writer (assignee if commissioned, else
+    # the record author). Resolve that user for the cached name/avatar/slug.
+    byline_id = _byline_user_id(story)
+    byline_user = None
+    if byline_id and byline_id == story.author_id and getattr(story, "author", None):
+        byline_user = story.author  # already prefetched
+    elif byline_id:
+        byline_user = await User.get_or_none(id=byline_id)
+    author_name = ""
+    author_avatar = None
+    author_slug = None
+    if byline_user:
+        author_name = byline_user.display_name or byline_user.email
+        author_avatar = byline_user.avatar_url
+        try:
+            author_slug = await ensure_user_slug(byline_user)
+        except Exception:
+            author_slug = byline_user.slug
 
     content_html = _sections_to_html(story.sections or [])
     excerpt = story.standfirst or ""
@@ -246,6 +269,8 @@ async def _sync_article(story: ConsoleStory) -> None:
             "image_url": img,
             "author": author_name,
             "author_avatar": author_avatar,
+            "author_id": byline_id,
+            "author_slug": author_slug,
             "is_featured": story.is_featured or False,
             "is_video": story.story_type == "video",
             "is_editorial_pick": story.is_editorial_pick or False,
@@ -273,6 +298,8 @@ async def _sync_article(story: ConsoleStory) -> None:
             image_url=img,
             author=author_name,
             author_avatar=author_avatar,
+            author_id=byline_id,
+            author_slug=author_slug,
             source="Wire24",
             source_url=marker,
             is_internal=True,
@@ -310,6 +337,31 @@ def _require_writer(current_user: User = Depends(current_active_user)) -> User:
     return current_user
 
 
+def _can_access_story(story: "ConsoleStory", user: User) -> bool:
+    """Who may see/edit a story: any editorial role, the record author, or the
+    writer it's been assigned to."""
+    if user.role in _EDITORIAL_ROLES:
+        return True
+    uid = str(user.id)
+    return uid == str(story.author_id) or uid == str(story.assigned_to_id)
+
+
+def _opt_person(story: ConsoleStory, attr: str) -> AuthorRead | None:
+    """Build an AuthorRead from a (possibly unfetched) related user; None-safe."""
+    try:
+        rel = getattr(story, attr)
+    except Exception:
+        return None
+    if not rel:
+        return None
+    return AuthorRead(
+        id=str(rel.id),
+        display_name=rel.display_name,
+        email=rel.email or "",
+        role=rel.role.value if rel.role else "",
+    )
+
+
 def _story_to_read(story: ConsoleStory) -> ConsoleStoryRead:
     sections_raw = story.sections or []
     sections = [SectionData.model_validate(s) for s in sections_raw]
@@ -322,6 +374,9 @@ def _story_to_read(story: ConsoleStory) -> ConsoleStoryRead:
     return ConsoleStoryRead(
         id=str(story.id),
         author=author,
+        assigned_to=_opt_person(story, "assigned_to"),
+        last_edited_by=_opt_person(story, "last_edited_by"),
+        last_edited_at=story.last_edited_at.isoformat() if story.last_edited_at else None,
         title=story.title,
         standfirst=story.standfirst,
         sections=sections,
@@ -356,9 +411,11 @@ async def list_stories(
     """
     is_editorial = current_user.role in _EDITORIAL_ROLES
 
-    qs = ConsoleStory.all().prefetch_related("author")
+    qs = ConsoleStory.all().prefetch_related("author", "assigned_to", "last_edited_by")
     if not is_editorial:
-        qs = qs.filter(author_id=current_user.id)
+        # Own stories plus anything assigned to them by an editor.
+        from tortoise.expressions import Q
+        qs = qs.filter(Q(author_id=current_user.id) | Q(assigned_to_id=current_user.id))
 
     # Editorial roles: exclude other people's auto_drafts
     if is_editorial:
@@ -386,12 +443,12 @@ async def get_story(
     story_id: uuid.UUID,
     current_user: User = Depends(_require_writer),
 ) -> ConsoleStoryRead:
-    story = await ConsoleStory.filter(id=story_id).prefetch_related("author").first()
+    story = await ConsoleStory.filter(id=story_id).prefetch_related("author", "assigned_to", "last_edited_by").first()
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
 
     is_editorial = current_user.role in _EDITORIAL_ROLES
-    if not is_editorial and str(story.author_id) != str(current_user.id):
+    if not _can_access_story(story, current_user):
         raise HTTPException(status_code=403, detail="Not your story")
 
     return _story_to_read(story)
@@ -427,7 +484,7 @@ async def create_story(
         is_editorial_pick=body.is_editorial_pick,
         issue_cluster_id=body.issue_cluster_id or None,
     )
-    await story.fetch_related("author")
+    await story.fetch_related("author", "assigned_to", "last_edited_by")
     return _story_to_read(story)
 
 
@@ -437,12 +494,12 @@ async def update_story(
     body: ConsoleStoryUpdate,
     current_user: User = Depends(_require_writer),
 ) -> ConsoleStoryRead:
-    story = await ConsoleStory.filter(id=story_id).prefetch_related("author").first()
+    story = await ConsoleStory.filter(id=story_id).prefetch_related("author", "assigned_to", "last_edited_by").first()
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
 
     is_editorial = current_user.role in _EDITORIAL_ROLES
-    if not is_editorial and str(story.author_id) != str(current_user.id):
+    if not _can_access_story(story, current_user):
         raise HTTPException(status_code=403, detail="Not your story")
 
     # Non-editorial: can't set publish or changes_requested (editor-only states)
@@ -458,9 +515,9 @@ async def update_story(
     # Reject a save built on a stale copy (someone else saved in the meantime).
     _check_version(story, body.expected_version)
 
-    # An editor saving content changes on someone else's story is a silent edit
-    # the writer should be told about. Capture the pre-edit content to compare.
-    editor_editing_others = is_editorial and str(story.author_id) != str(current_user.id)
+    # An editor saving content changes on a story they're not the byline writer
+    # of is a silent edit the writer should be told about (and audited).
+    editor_editing_others = is_editorial and str(_byline_user_id(story)) != str(current_user.id)
     # Normalize the stored copy through the SAME validators the incoming body
     # passed through, so the diff compares like-for-like. The stored values were
     # already sanitized/escaped once on a prior save; the body re-escapes the
@@ -495,6 +552,16 @@ async def update_story(
         update_data["is_featured"] = body.is_featured
         update_data["is_editorial_pick"] = body.is_editorial_pick
 
+    # Did the actual story content change? (drives notify-on-edit + audit)
+    content_changed = (
+        update_data["sections"] != prev_sections
+        or update_data["title"] != prev_title
+        or update_data["standfirst"] != prev_standfirst
+    )
+    if editor_editing_others and content_changed:
+        update_data["last_edited_by_id"] = current_user.id
+        update_data["last_edited_at"] = datetime.now(timezone.utc)
+
     # Stamp published_at on first publish.
     if update_data.get("status") == ConsoleStoryStatus.publish and not story.published_at:
         update_data["published_at"] = datetime.now(timezone.utc)
@@ -502,7 +569,7 @@ async def update_story(
     old_status = story.status
     new_status = update_data.get("status")
     await story.update_from_dict(update_data).save()
-    await story.fetch_related("author")
+    await story.fetch_related("author", "assigned_to", "last_edited_by")
     title_snippet = (story.title or "Untitled")[:80]
     note = (body.editor_note or "").strip() if is_editorial else ""
     # Keep the public Article in sync if this story is already published
@@ -562,11 +629,6 @@ async def update_story(
     # Notify the writer when an editor silently edits their story's content
     # (no status/note change would otherwise tell them their words changed).
     if editor_editing_others:
-        content_changed = (
-            update_data["sections"] != prev_sections
-            or update_data["title"] != prev_title
-            or update_data["standfirst"] != prev_standfirst
-        )
         if content_changed:
             # Debounce: an editor working through a story autosaves many times.
             # Collapse the whole session into one notification — skip if the
@@ -595,12 +657,12 @@ async def update_story_status(
     body: ConsoleStoryStatusUpdate,
     current_user: User = Depends(_require_writer),
 ) -> ConsoleStoryRead:
-    story = await ConsoleStory.filter(id=story_id).prefetch_related("author").first()
+    story = await ConsoleStory.filter(id=story_id).prefetch_related("author", "assigned_to", "last_edited_by").first()
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
 
     is_editorial = current_user.role in _EDITORIAL_ROLES
-    if not is_editorial and str(story.author_id) != str(current_user.id):
+    if not _can_access_story(story, current_user):
         raise HTTPException(status_code=403, detail="Not your story")
 
     if body.status == ConsoleStoryStatus.publish and current_user.role not in _PUBLISH_ROLES:
@@ -620,7 +682,7 @@ async def update_story_status(
         update["published_at"] = datetime.now(timezone.utc)
 
     await story.update_from_dict(update).save()
-    await story.fetch_related("author")
+    await story.fetch_related("author", "assigned_to", "last_edited_by")
     title_snippet = (story.title or "Untitled")[:80]
     # Editorial notes always go to the canonical thread, never the legacy column.
     note = (body.editor_note or "").strip() if is_editorial else ""
@@ -719,7 +781,7 @@ async def delete_story(
         raise HTTPException(status_code=404, detail="Story not found")
 
     is_editorial = current_user.role in _EDITORIAL_ROLES
-    if not is_editorial and str(story.author_id) != str(current_user.id):
+    if not _can_access_story(story, current_user):
         raise HTTPException(status_code=403, detail="Not your story")
 
     # Super admins hard-delete; everyone else moves to trash
@@ -755,6 +817,78 @@ async def refresh_author_info(
     return {"updated": count}
 
 
+@router.patch("/stories/{story_id}/assign", response_model=ConsoleStoryRead)
+async def assign_story(
+    story_id: uuid.UUID,
+    body: StoryAssignUpdate,
+    current_user: User = Depends(_require_writer),
+) -> ConsoleStoryRead:
+    """Editor initiates/commissions a story to a writer. The assignee becomes the
+    byline owner, can see/edit it, and is notified. Empty assignee_id unassigns.
+    """
+    if current_user.role not in _EDITORIAL_ROLES:
+        raise HTTPException(status_code=403, detail="Only editors can assign stories")
+
+    story = await ConsoleStory.filter(id=story_id).prefetch_related(
+        "author", "assigned_to", "last_edited_by"
+    ).first()
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    assignee = None
+    if body.assignee_id:
+        assignee = await User.get_or_none(id=body.assignee_id)
+        if not assignee or not assignee.is_active:
+            raise HTTPException(status_code=404, detail="Assignee not found")
+        if not role_has_at_least(assignee.role, UserRole.contributor):
+            raise HTTPException(status_code=422, detail="Assignee must be a contributor or above")
+
+    already_assigned = str(story.assigned_to_id or "")
+    story.assigned_to_id = assignee.id if assignee else None
+    await story.save(update_fields=["assigned_to_id", "updated_at"])
+    await story.fetch_related("author", "assigned_to", "last_edited_by")
+
+    # Notify the newly assigned writer (skip re-assigns to the same person / self).
+    if assignee and str(assignee.id) != already_assigned and str(assignee.id) != str(current_user.id):
+        title_snippet = (story.title or "Untitled")[:80]
+        commissioner = current_user.display_name or current_user.email
+        try:
+            await create_notification(
+                recipient_id=assignee.id,
+                notif_type=NotificationType.story_assigned,
+                title="You've been assigned a story",
+                body=f'{commissioner} assigned "{title_snippet}" to you to write.',
+                link=f"/console/editor/{story.id}",
+                sender_id=current_user.id,
+            )
+        except Exception as exc:
+            logger.warning("assign notification failed for story %s: %s", story.id, exc)
+
+    return _story_to_read(story)
+
+
+@router.get("/assignable-writers")
+async def list_assignable_writers(
+    current_user: User = Depends(_require_writer),
+) -> list[dict]:
+    """Active writers an editor can assign a story to (editorial only)."""
+    if current_user.role not in _EDITORIAL_ROLES:
+        raise HTTPException(status_code=403, detail="Only editors can list assignable writers")
+    writer_roles = [
+        UserRole.contributor.value,
+        UserRole.columnist.value,
+        UserRole.reporter.value,
+        UserRole.editor.value,
+    ]
+    users = await User.filter(is_active=True, role__in=writer_roles).order_by("display_name").values(
+        "id", "display_name", "email", "role"
+    )
+    return [
+        {"id": str(u["id"]), "display_name": u["display_name"], "email": u["email"], "role": u["role"]}
+        for u in users
+    ]
+
+
 # ── Story comment (editorial thread) endpoints ─────────────────────────────────
 
 async def _load_story_for_thread(story_id: uuid.UUID, current_user: User) -> ConsoleStory:
@@ -762,11 +896,10 @@ async def _load_story_for_thread(story_id: uuid.UUID, current_user: User) -> Con
 
     Same visibility rule as the story itself: the author or any editorial role.
     """
-    story = await ConsoleStory.filter(id=story_id).prefetch_related("author").first()
+    story = await ConsoleStory.filter(id=story_id).prefetch_related("author", "assigned_to", "last_edited_by").first()
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
-    is_editorial = current_user.role in _EDITORIAL_ROLES
-    if not is_editorial and str(story.author_id) != str(current_user.id):
+    if not _can_access_story(story, current_user):
         raise HTTPException(status_code=403, detail="Not your story")
     return story
 
@@ -1079,7 +1212,7 @@ async def list_issue_stories(
         raise HTTPException(status_code=404, detail="Issue cluster not found")
     stories = await ConsoleStory.filter(
         issue_cluster_id=issue_id
-    ).exclude(status=ConsoleStoryStatus.trash).prefetch_related("author").order_by("-updated_at")
+    ).exclude(status=ConsoleStoryStatus.trash).prefetch_related("author", "assigned_to", "last_edited_by").order_by("-updated_at")
     return [_story_to_read(s) for s in stories]
 
 
@@ -1091,11 +1224,17 @@ async def get_portfolio(current_user: User = Depends(current_active_user)):
     ConsoleStories, including views, successful shares, and helpful yes/no
     feedback. The frontend handles search / time-window / sort / category.
     """
+    # The writer's byline stories: those assigned to them, plus their own
+    # unassigned stories (byline = assignee if set, else author).
+    from tortoise.expressions import Q
     story_type_by_id = {
         s["id"]: s["story_type"]
-        for s in await ConsoleStory.filter(
-            author_id=current_user.id, status=ConsoleStoryStatus.publish
-        ).values("id", "story_type")
+        for s in await ConsoleStory.filter(status=ConsoleStoryStatus.publish)
+        .filter(
+            Q(assigned_to_id=current_user.id)
+            | Q(assigned_to_id__isnull=True, author_id=current_user.id)
+        )
+        .values("id", "story_type")
     }
     if not story_type_by_id:
         return []
