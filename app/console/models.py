@@ -9,6 +9,10 @@ class ConsoleStoryStatus(str, enum.Enum):
     publish = "publish"
     draft = "draft"
     pending_review = "pending_review"
+    # Editor kicked the story back to the writer to fix something. Distinct from
+    # 'draft' (a fresh draft the writer hasn't submitted) so the UI can tell them
+    # apart and surface the editorial note prominently.
+    changes_requested = "changes_requested"
     future = "future"
     auto_draft = "auto_draft"
     trash = "trash"
@@ -61,6 +65,9 @@ class ConsoleStory(Model):
     )
     scheduled_for = fields.DatetimeField(null=True)
     word_count = fields.IntField(default=0)
+    # LEGACY: editorial notes now live in the StoryComment thread (the canonical
+    # home). No longer written by the app; retained only so historical rows keep
+    # their note. Do not add new writes here — use _post_editorial_note().
     editor_note = fields.TextField(null=True)
     # Geographic focus — writer indicates which regions the story targets
     geo_regions = fields.JSONField(default=list)
@@ -89,9 +96,41 @@ class ConsoleStory(Model):
     editorial_score = fields.IntField(null=True)
     # Set when status transitions to 'publish'; used for tenure calculations.
     published_at = fields.DatetimeField(null=True)
+    # Optimistic-lock counter. Bumped on every content/status save so a writer
+    # and an editor editing concurrently can't silently clobber each other —
+    # a stale save (expected_version != version) is rejected with 409.
+    version = fields.IntField(default=1)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
     class Meta:
         table = "console_stories"
         ordering = ["-updated_at"]
+
+
+class StoryComment(Model):
+    """An editorial back-and-forth note on a story.
+
+    Replaces the single overwritable ``ConsoleStory.editor_note`` with a proper
+    thread: editors and the writer can leave multiple comments, each one
+    independently resolvable. ``editor_note`` is kept for backwards-compat but
+    new conversations live here.
+    """
+    id = fields.UUIDField(pk=True, default=uuid.uuid4)
+    story = fields.ForeignKeyField(
+        "models.ConsoleStory", related_name="comments", on_delete=fields.CASCADE
+    )
+    author = fields.ForeignKeyField("models.User", related_name="story_comments")
+    body = fields.TextField()
+    # True once the writer (or an editor) marks the point addressed.
+    is_resolved = fields.BooleanField(default=False)
+    resolved_by = fields.ForeignKeyField(
+        "models.User", related_name="resolved_story_comments", null=True
+    )
+    resolved_at = fields.DatetimeField(null=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "story_comments"
+        ordering = ["created_at"]

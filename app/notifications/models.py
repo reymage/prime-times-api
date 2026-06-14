@@ -12,6 +12,12 @@ class NotificationType(str, enum.Enum):
     story_published = "story_published"
     story_rejected = "story_rejected"
     story_note = "story_note"
+    # Editor kicked a story back to the writer to fix something (with a note).
+    story_changes_requested = "story_changes_requested"
+    # A new comment was posted on the story's editorial thread.
+    story_comment = "story_comment"
+    # An editor edited the writer's story content directly.
+    story_edited = "story_edited"
     # Contributor application
     application_submitted = "application_submitted"
     application_under_review = "application_under_review"

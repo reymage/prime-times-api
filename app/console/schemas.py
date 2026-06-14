@@ -169,13 +169,16 @@ class ConsoleStoryCreate(BaseModel):
 
 
 class ConsoleStoryUpdate(ConsoleStoryCreate):
-    pass
+    # Optimistic-lock guard. When provided, the save is rejected with 409 if the
+    # story has been modified since the client loaded it (version moved on).
+    expected_version: Optional[int] = None
 
 
 class ConsoleStoryStatusUpdate(BaseModel):
     status: ConsoleStoryStatus
     scheduled_for: Optional[str] = None
     editor_note: Optional[str] = None
+    expected_version: Optional[int] = None
 
 
 class AuthorRead(BaseModel):
@@ -205,10 +208,50 @@ class ConsoleStoryRead(BaseModel):
     is_featured: bool
     is_editorial_pick: bool
     issue_cluster_id: Optional[str]
+    version: int
     created_at: str
     updated_at: str
 
     model_config = {"from_attributes": True}
+
+
+# ── Story comment (editorial thread) schemas ──────────────────────────────────
+
+class StoryCommentCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=5000)
+
+    @field_validator("body", mode="before")
+    @classmethod
+    def sanitize_body(cls, v: object) -> str:
+        # Comments are plain text — escape everything, no HTML.
+        return html.escape(str(v).strip()[:5000]) if v else ""
+
+
+class StoryCommentAuthorRead(BaseModel):
+    id: str
+    display_name: Optional[str]
+    email: str
+    role: str
+
+    model_config = {"from_attributes": True}
+
+
+class StoryCommentRead(BaseModel):
+    id: str
+    story_id: str
+    author: StoryCommentAuthorRead
+    body: str
+    is_resolved: bool
+    resolved_by_id: Optional[str]
+    resolved_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+    model_config = {"from_attributes": True}
+
+
+class StoryCommentResolve(BaseModel):
+    is_resolved: bool
 
 
 # ── Issue cluster schemas ─────────────────────────────────────────────────────
