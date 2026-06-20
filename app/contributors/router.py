@@ -1521,7 +1521,7 @@ async def mark_payout_paid(
                 transfer_code = await paystack_client.initiate_transfer(
                     payout.requested_amount,
                     bank.paystack_recipient_code,
-                    f"Prime Times Daily contributor payout",
+                    f"Wire24 contributor payout",
                     reference,
                 )
             except Exception as exc:

@@ -70,8 +70,8 @@ class Settings(BaseSettings):
     # Default "console" logs emails to stdout (safe for development).
     EMAIL_PROVIDER: str = "console"
     BREVO_API_KEY: str = ""
-    EMAIL_FROM_ADDRESS: str = "noreply@primetimesdaily.com"
-    EMAIL_FROM_NAME: str = "Prime Times Daily"
+    EMAIL_FROM_ADDRESS: str = "noreply@wire24news.com"
+    EMAIL_FROM_NAME: str = "Wire24"
 
     # ── AI / LLM ──────────────────────────────────────────────────────────────
     LLM_PROVIDER: str = "groq"                # groq | openai | anthropic
