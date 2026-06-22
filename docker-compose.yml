@@ -1,6 +1,8 @@
 services:
 
   # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  # No `ports:` mapping on purpose — the DB is reachable ONLY from other
+  # containers on the private `backend` network, never from the public internet.
   db:
     image: postgres:16-alpine
     restart: always
@@ -19,23 +21,57 @@ services:
     networks:
       - backend
 
+  # ── Redis (AI cache + shared rate-limit state) ─────────────────────────────────
+  # Also internal-only. Persists to disk so the cache survives restarts.
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
   # ── FastAPI application ───────────────────────────────────────────────────────
+  # No public ports — traffic arrives via the Cloudflare Tunnel below, which
+  # reaches the app over the internal network at http://app:8000.
   app:
     build:
       context: .
       dockerfile: Dockerfile
     restart: always
-    # Load everything from .env, then override DATABASE_URL to use the
-    # docker-internal service hostname instead of localhost.
     env_file: .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-ptd_user}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-ptd}
+      REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: production
-    ports:
-      - "0.0.0.0:8000:8000"
+    expose:
+      - "8000"
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ── Cloudflare Tunnel ──────────────────────────────────────────────────────────
+  # Makes only an OUTBOUND connection to Cloudflare's edge; no inbound port is
+  # opened on the server. Configure the public hostname → http://app:8000 ingress
+  # in the Cloudflare Zero Trust dashboard. Token comes from .env.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: always
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - app
     networks:
       - backend
 
@@ -45,3 +81,4 @@ networks:
 
 volumes:
   postgres_data:
+  redis_data:
