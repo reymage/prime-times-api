@@ -42,6 +42,8 @@ TORTOISE_ORM = {
                 "app.console.models",
                 "app.contributors.models",
                 "app.notifications.models",
+                "app.press.models",
+                "app.contact.models",
                 "aerich.models",
             ],
             "default_connection": "default",

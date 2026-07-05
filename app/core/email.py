@@ -87,6 +87,25 @@ class EmailClient:
             html_body=_tpl_reset(to_name, reset_url),
         )
 
+    async def send_contact_message(
+        self,
+        to_email: str,
+        reason_label: str,
+        name: str,
+        email: str,
+        organisation: str | None,
+        subject: str,
+        message: str,
+    ) -> None:
+        await self.send(
+            to_email,
+            "Wire24 Team",
+            subject=f"[Contact form] {reason_label} — {name}",
+            html_body=_tpl_contact_message(
+                reason_label, name, email, organisation, subject, message
+            ),
+        )
+
     # ── Contributor reward emails ──────────────────────────────────────────
 
     async def send_application_approved(
@@ -397,6 +416,41 @@ def _tpl_reset(name: str, url: str) -> str:
             "This link expires in 1 hour. If you didn't request this, "
             "you can safely ignore this email — your password won't change."
         ),
+    )
+
+
+def _tpl_contact_message(
+    reason_label: str,
+    name: str,
+    email: str,
+    organisation: str | None,
+    subject: str,
+    message: str,
+) -> str:
+    org_row = (
+        f"<p style=\"margin:0 0 6px;\"><strong>Organisation:</strong> {organisation}</p>"
+        if organisation
+        else ""
+    )
+    subject_row = (
+        f"<p style=\"margin:0 0 6px;\"><strong>Subject:</strong> {subject}</p>" if subject else ""
+    )
+    safe_message = message.replace("\n", "<br />")
+    return _layout(
+        title="New contact form message",
+        preheader=f"{reason_label} — new message from {name} via the Wire24 contact page.",
+        body_html=(
+            f"<p style=\"margin:0 0 14px;\">A new message was submitted on the Wire24 "
+            "contact page.</p>"
+            f"<p style=\"margin:0 0 6px;\"><strong>Reason:</strong> {reason_label}</p>"
+            f"<p style=\"margin:0 0 6px;\"><strong>Name:</strong> {name}</p>"
+            f"<p style=\"margin:0 0 6px;\"><strong>Email:</strong> "
+            f"<a href=\"mailto:{email}\" style=\"color:{BRAND_PRIMARY};\">{email}</a></p>"
+            f"{org_row}"
+            f"{subject_row}"
+            f"<p style=\"margin:14px 0 0; text-align:left;\">{safe_message}</p>"
+        ),
+        footer_note="Reply directly to the sender's email address above.",
     )
 
 
